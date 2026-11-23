@@ -1,0 +1,29 @@
+name: ci
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
+        with:
+          go-version-file: go.mod
+
+      - uses: golangci/golangci-lint-action@db9de0fc1a667e1a49d2291a1a042dff081d78f6 # v9
+        with:
+          version: v2.15.0
+
+      - run: go vet ./...
+      - run: go test ./...
+      - run: gofmt -l . | tee /tmp/fmt && test ! -s /tmp/fmt
+      - run: go build -o "$RUNNER_TEMP/scip-tags" ./cmd/scip-tags
+
+      - name: Build for OpenBSD ARM
+        run: GOOS=openbsd GOARCH=arm GOARM=7 CGO_ENABLED=0 go build -o "$RUNNER_TEMP/scip-tags-openbsd-arm" ./cmd/scip-tags
+
+      - name: Build browser Wasm from source
+        run: GOOS=js GOARCH=wasm go build -o "$RUNNER_TEMP/code-index.wasm" ./cmd/scip-tags

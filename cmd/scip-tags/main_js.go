@@ -21,44 +21,58 @@ import (
 	"encoding/json"
 	"strings"
 	"syscall/js"
+
+	"github.com/danilrwx/scip-tags/internal/index"
 )
 
-func encodeIndex(result navigation, err error) string {
+func encodeIndex(result index.Navigation, err error) string {
 	if err == nil {
 		data, encodeErr := json.Marshal(result)
 		if encodeErr == nil {
 			return string(data)
 		}
+
 		err = encodeErr
 	}
+
 	data, _ := json.Marshal(map[string]string{"error": err.Error()})
+
 	return string(data)
 }
 
 func main() {
-	index := js.FuncOf(func(_ js.Value, args []js.Value) any {
+	indexSnapshot := js.FuncOf(func(_ js.Value, args []js.Value) any {
 		if len(args) != 1 || args[0].Type() != js.TypeString {
 			return `{"error":"expected one Go snapshot as a JSON string"}`
 		}
-		return encodeIndex(indexGoJSON(strings.NewReader(args[0].String())))
+
+		return encodeIndex(index.GoJSON(strings.NewReader(args[0].String())))
 	})
-	defer index.Release()
+	defer indexSnapshot.Release()
+
 	archive := js.FuncOf(func(_ js.Value, args []js.Value) any {
 		if len(args) != 3 || args[0].Type() != js.TypeString || args[1].Type() != js.TypeString ||
 			!args[2].InstanceOf(js.Global().Get("Uint8Array")) {
 			return `{"error":"expected repository, revision and gzipped archive bytes"}`
 		}
-		if args[2].Length() > maxSourceSize {
+
+		if args[2].Length() > index.MaxSourceSize {
 			return `{"error":"source archive exceeds 32 MiB"}`
 		}
+
 		data := make([]byte, args[2].Length())
 		js.CopyBytesToGo(data, args[2])
-		input := goSnapshot{Version: 1, Repository: args[0].String(), Revision: args[1].String(),
-			GOOS: "linux", GOARCH: "amd64"}
-		return encodeIndex(indexGoArchive(bytes.NewReader(data), input))
+		input := index.GoSnapshot{
+			Version: 1, Repository: args[0].String(), Revision: args[1].String(),
+			GOOS: "linux", GOARCH: "amd64",
+		}
+
+		return encodeIndex(index.GoArchive(bytes.NewReader(data), input))
 	})
 	defer archive.Release()
-	js.Global().Set("codeIndexGo", index)
+
+	js.Global().Set("codeIndexGo", indexSnapshot)
 	js.Global().Set("codeIndexGoArchive", archive)
+
 	select {}
 }

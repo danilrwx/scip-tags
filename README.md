@@ -1,6 +1,6 @@
-# code-index
+# scip-tags
 
-`code-index` converts [SCIP](https://github.com/scip-code/scip) indexes into
+`scip-tags` converts [SCIP](https://github.com/scip-code/scip) indexes into
 ctags-compatible `tags` files. It reads the same SCIP format for C/C++, Go,
 Python, TypeScript, and any other language with a SCIP producer. Generate the
 index with your language's SCIP indexer before running the converter.
@@ -10,13 +10,13 @@ index with your language's SCIP indexer before running the converter.
 Build the CLI with Go 1.26 or later.
 
 ```sh
-go build -o "$HOME/.local/bin/code-index" .
+go build -o "$HOME/.local/bin/scip-tags" ./cmd/scip-tags
 ```
 
 In the source root, write the tag file alongside the sources.
 
 ```sh
-code-index -scip index.scip > tags.tmp && mv tags.tmp tags
+scip-tags -scip index.scip > tags.tmp && mv tags.tmp tags
 ```
 
 The CLI reads `index.scip` by default. Repeat `-scip` for several indexes of
@@ -28,13 +28,13 @@ Vim uses its built-in `Ctrl-]`, `:tag name`, and `:tselect name`. When
 distinct definitions have the same name, the tag file preserves them as
 separate entries. `:tselect` lists the candidates.
 
-For an exact SCIP jump by cursor position, source `vim/code-index.vim` from
+For an exact SCIP jump by cursor position, source `vim/scip-tags.vim` from
 your vimrc and bind its command to `gd`. It reads the same `tags` file and
 uses Vim's tag stack, so `Ctrl-T` returns to the call site.
 
 ```vim
-source /path/to/code-index/vim/code-index.vim
-nmap gd <Plug>(CodeIndexDefinition)
+source /path/to/scip-tags/vim/scip-tags.vim
+nmap gd <Plug>(ScipTagsDefinition)
 ```
 
 ## Export a map for Patchtree
@@ -43,7 +43,7 @@ Patchtree uses a revision-pinned JSON map with occurrence ranges and resolved
 targets. Export it from the clean Git checkout used to build the SCIP index.
 
 ```sh
-code-index -format patchtree -repo https://github.com/owner/repo -scip index.scip > code-index.json
+scip-tags -format patchtree -repo https://github.com/owner/repo -scip index.scip > code-index.json
 ```
 
 Load the map under **Settings → Code index → Import…** in Patchtree. JSON
@@ -57,14 +57,17 @@ Build the browser artifact from the same source and toolchain as the native
 binary. Package both browser files with the extension.
 
 ```sh
-GOOS=js GOARCH=wasm go build -o code-index.wasm .
+GOOS=js GOARCH=wasm go build -o code-index.wasm ./cmd/scip-tags
 cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" .
 ```
+
+To build Patchtree with this checkout, set
+`PATCHTREE_CODE_INDEX_DIR=/path/to/scip-tags/cmd/scip-tags`.
 
 After starting the module with the Go runtime in a Web Worker, call
 `codeIndexGo(JSON.stringify(snapshot))`. It returns the navigation map as a JSON
 string or a JSON object with an `error` string. Native tools can send the same
-snapshot to `code-index -snapshot` on stdin and read the map from stdout.
+snapshot to `scip-tags -snapshot` on stdin and read the map from stdout.
 Errors from the CLI go to stderr with a nonzero exit status.
 
 A version 1 snapshot carries the exact repository revision and the target build

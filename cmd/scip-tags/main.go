@@ -30,7 +30,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/scip-code/scip/bindings/go/scip"
-	"google.golang.org/protobuf/proto"
+
+	"github.com/danilrwx/scip-tags/internal/index"
 )
 
 func git(args ...string) string {
@@ -38,24 +39,30 @@ func git(args ...string) string {
 	if err != nil {
 		log.Fatalf("git %s: %v", strings.Join(args, " "), err)
 	}
+
 	return string(data)
 }
 
 func loadSources(root string, index *scip.Index, tracked map[string]bool) (map[string][]string, error) {
 	sources := make(map[string][]string)
+
 	for _, doc := range index.Documents {
 		if !tracked[doc.RelativePath] {
 			continue
 		}
+
 		data, err := os.ReadFile(filepath.Join(root, doc.RelativePath))
 		if err != nil {
 			return nil, err
 		}
+
 		if !utf8.Valid(data) {
 			return nil, fmt.Errorf("%s: source is not UTF-8", doc.RelativePath)
 		}
+
 		sources[doc.RelativePath] = strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
 	}
+
 	return sources, nil
 }
 
@@ -63,35 +70,44 @@ func run() error {
 	repository := flag.String("repo", "", "HTTPS URL of the reviewed repository (without .git)")
 	format := flag.String("format", "", "output format: tags (default for SCIP) or patchtree")
 	sourceRoot := flag.String("root", "", "source root for tags (default: SCIP project root)")
+
 	var indexPaths []string
+
 	flag.Func("scip", "SCIP index built from the current Git checkout (repeatable, default index.scip)", func(path string) error {
 		indexPaths = append(indexPaths, path)
 		return nil
 	})
+
 	goSource := flag.Bool("go-source", false, "index Go sources in the current Git checkout")
 	snapshot := flag.Bool("snapshot", false, "index a Go source snapshot (JSON from stdin)")
 	goos := flag.String("goos", runtime.GOOS, "target OS for -go-source")
 	goarch := flag.String("goarch", runtime.GOARCH, "target architecture for -go-source")
 	tags := flag.String("tags", "", "comma-separated Go build tags for -go-source")
+
 	flag.Parse()
+
 	if *snapshot && *goSource || (*snapshot || *goSource) && len(indexPaths) != 0 {
 		return fmt.Errorf("choose -snapshot, -go-source or -scip")
 	}
+
 	if len(indexPaths) == 0 {
 		indexPaths = []string{"index.scip"}
 	}
+
 	if *format == "" {
 		*format = "tags"
 		if *snapshot || *goSource || *repository != "" {
 			*format = "patchtree"
 		}
 	}
+
 	switch *format {
 	case "tags", "ctags":
 		if *snapshot || *goSource {
 			return fmt.Errorf("tags output requires a SCIP index")
 		}
-		return exportTags(os.Stdout, *sourceRoot, indexPaths)
+
+		return index.ExportTags(os.Stdout, *sourceRoot, indexPaths)
 	case "patchtree":
 		if *sourceRoot != "" {
 			return fmt.Errorf("-root applies to tags output")
@@ -99,105 +115,110 @@ func run() error {
 	default:
 		return fmt.Errorf("unknown output format %q (use tags or patchtree)", *format)
 	}
+
 	if *snapshot {
-		result, err := indexGoJSON(os.Stdin)
+		result, err := index.GoJSON(os.Stdin)
 		if err != nil {
 			return err
 		}
+
 		return json.NewEncoder(os.Stdout).Encode(result)
 	}
+
 	repo, err := url.Parse(*repository)
 	if err != nil || repo.Scheme != "https" || repo.Host == "" || repo.Path == "" ||
 		repo.User != nil || repo.RawQuery != "" || repo.Fragment != "" {
 		return fmt.Errorf("provide -repo with the HTTPS repository URL")
 	}
+
 	if git("status", "--porcelain", "--untracked-files=no") != "" {
 		return fmt.Errorf("tracked files must match HEAD")
 	}
+
 	revision := strings.TrimSpace(git("rev-parse", "HEAD"))
 	root := strings.TrimSuffix(git("rev-parse", "--show-toplevel"), "\n")
 	tracked := make(map[string]bool)
+
 	for _, entry := range strings.Split(git("ls-tree", "-rz", revision), "\x00") {
 		meta, path, ok := strings.Cut(entry, "\t")
 		if ok && (strings.HasPrefix(meta, "100644 ") || strings.HasPrefix(meta, "100755 ")) {
 			tracked[path] = true
 		}
 	}
+
 	repoURL := strings.TrimRight(repo.String(), "/")
-	var result navigation
+
+	var result index.Navigation
+
 	if *goSource {
 		var buildTags []string
 		if *tags != "" {
 			buildTags = strings.Split(*tags, ",")
 		}
-		input := goSnapshot{Version: 1, Repository: repoURL, Revision: revision, GOOS: *goos, GOARCH: *goarch,
-			Tags: buildTags, Sources: make(map[string]string)}
+
+		input := index.GoSnapshot{
+			Version: 1, Repository: repoURL, Revision: revision, GOOS: *goos, GOARCH: *goarch,
+			Tags: buildTags, Sources: make(map[string]string),
+		}
+
 		for name := range tracked {
 			if name != "go.work" && !strings.HasSuffix(name, ".go") && filepath.Base(name) != "go.mod" {
 				continue
 			}
+
 			data, err := os.ReadFile(filepath.Join(root, name))
 			if err != nil {
 				return err
 			}
+
 			input.Sources[name] = string(data)
 		}
-		result, err = indexGo(input)
+
+		result, err = index.Go(input)
 		if err != nil {
 			return err
 		}
 	} else {
 		sources := make(map[string][]string)
+
 		var indexes []*scip.Index
+
 		for _, path := range indexPaths {
-			index, err := readSCIP(path)
+			scipIndex, err := index.ReadSCIP(path)
 			if err != nil {
 				return err
 			}
-			indexRoot, err := scipRoot(index)
+
+			indexRoot, err := index.SCIPRoot(scipIndex)
 			if err != nil || indexRoot != root {
 				return fmt.Errorf("%s: SCIP project root must be %s", path, root)
 			}
-			loaded, err := loadSources(root, index, tracked)
+
+			loaded, err := loadSources(root, scipIndex, tracked)
 			if err != nil {
 				return err
 			}
+
 			for path, lines := range loaded {
 				sources[path] = lines
 			}
-			indexes = append(indexes, index)
+
+			indexes = append(indexes, scipIndex)
 		}
-		files := resolveSCIP(sources, indexes...)
+
+		files := index.ResolveSCIP(sources, indexes...)
 		if len(files) == 0 {
 			return fmt.Errorf("no navigable references in tracked files")
 		}
-		result = navigation{Version: 1, Repository: repoURL, Revision: revision, Files: files}
+
+		result = index.Navigation{Version: 1, Repository: repoURL, Revision: revision, Files: files}
 	}
+
 	if strings.TrimSpace(git("rev-parse", "HEAD")) != revision || git("status", "--porcelain", "--untracked-files=no") != "" {
 		return fmt.Errorf("checkout changed during export")
 	}
+
 	return json.NewEncoder(os.Stdout).Encode(result)
-}
-
-func readSCIP(path string) (*scip.Index, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	index := new(scip.Index)
-	if err := proto.Unmarshal(data, index); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
-	}
-	return index, nil
-}
-
-func scipRoot(index *scip.Index) (string, error) {
-	root, err := url.Parse(index.GetMetadata().GetProjectRoot())
-	if err != nil || root.Scheme != "file" || (root.Host != "" && root.Host != "localhost") ||
-		root.User != nil || root.RawQuery != "" || root.Fragment != "" || !filepath.IsAbs(root.Path) {
-		return "", fmt.Errorf("SCIP project root must be an absolute local file URL")
-	}
-	return filepath.Clean(root.Path), nil
 }
 
 func main() {

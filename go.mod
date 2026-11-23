@@ -1,4 +1,4 @@
-module github.com/danilrwx/code-index
+module github.com/danilrwx/scip-tags
 
 go 1.26.0
 

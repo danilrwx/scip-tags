@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package main
+package index
 
 import (
 	"slices"
@@ -28,31 +28,37 @@ func isDefinition(occ *scip.Occurrence) bool {
 		occ.GetSymbolRoles()&int32(scip.SymbolRole_ForwardDefinition) == 0
 }
 
-func resolveSCIP(sources map[string][]string, indexes ...*scip.Index) map[string]map[int]*sourceLine {
-	files := make(map[string]map[int]*sourceLine)
-	visitSCIPSpans(sources, indexes, func(path string, line int, text string, span span) {
+func ResolveSCIP(sources map[string][]string, indexes ...*scip.Index) map[string]map[int]*SourceLine {
+	files := make(map[string]map[int]*SourceLine)
+
+	visitSCIPSpans(sources, indexes, func(path string, line int, text string, span Span) {
 		rows := files[path]
 		if rows == nil {
-			rows = make(map[int]*sourceLine)
+			rows = make(map[int]*SourceLine)
 			files[path] = rows
 		}
+
 		if rows[line] == nil {
-			rows[line] = &sourceLine{Text: text}
+			rows[line] = &SourceLine{Text: text}
 		}
+
 		rows[line].Spans = append(rows[line].Spans, span)
 	})
+
 	return files
 }
 
-func visitSCIPSpans(sources map[string][]string, indexes []*scip.Index, visit func(path string, line int, text string, span span)) {
+func visitSCIPSpans(sources map[string][]string, indexes []*scip.Index, visit func(path string, line int, text string, span Span)) {
 	// Local symbol IDs belong to a document in one input index.
 	key := func(index int, path, symbol string) string {
 		if strings.HasPrefix(symbol, "local ") {
 			return strconv.Itoa(index) + "\x00" + path + "\x00" + symbol
 		}
+
 		return symbol
 	}
-	defs := make(map[string][]location)
+	defs := make(map[string][]Location)
+
 	for i, index := range indexes {
 		for _, doc := range index.Documents {
 			lines := sources[doc.RelativePath]
@@ -60,16 +66,20 @@ func visitSCIPSpans(sources map[string][]string, indexes []*scip.Index, visit fu
 				if !isDefinition(occ) {
 					continue
 				}
+
 				r, ok := occ.SourceRange()
 				if !ok {
 					continue
 				}
+
 				col, ok := byteOffset(lines, r.Start, doc.PositionEncoding)
 				if !ok {
 					continue
 				}
+
 				symbol := key(i, doc.RelativePath, occ.Symbol)
-				target := location{doc.RelativePath, int(r.Start.Line) + 1, col}
+
+				target := Location{doc.RelativePath, int(r.Start.Line) + 1, col}
 				if !slices.Contains(defs[symbol], target) {
 					defs[symbol] = append(defs[symbol], target)
 				}
@@ -82,27 +92,34 @@ func visitSCIPSpans(sources map[string][]string, indexes []*scip.Index, visit fu
 			lines := sources[doc.RelativePath]
 			for _, occ := range doc.Occurrences {
 				targets := defs[key(i, doc.RelativePath, occ.Symbol)]
+
 				r, ok := occ.SourceRange()
 				if !ok || len(targets) == 0 {
 					continue
 				}
+
 				start, startOK := byteOffset(lines, r.Start, doc.PositionEncoding)
+
 				end, endOK := byteOffset(lines, r.End, doc.PositionEncoding)
 				if !startOK || !endOK || r.Start.Line > r.End.Line {
 					continue
 				}
+
 				for line := int(r.Start.Line); line <= int(r.End.Line); line++ {
 					left, right := 0, len(lines[line])
 					if line == int(r.Start.Line) {
 						left = start
 					}
+
 					if line == int(r.End.Line) {
 						right = end
 					}
+
 					if left >= right {
 						continue
 					}
-					visit(doc.RelativePath, line+1, lines[line], span{left, right, targets})
+
+					visit(doc.RelativePath, line+1, lines[line], Span{left, right, targets})
 				}
 			}
 		}
@@ -114,7 +131,9 @@ func byteOffset(lines []string, pos scip.Position, encoding scip.PositionEncodin
 	if line < 0 || line >= len(lines) || col < 0 {
 		return 0, false
 	}
+
 	text := lines[line]
+
 	switch encoding {
 	case scip.PositionEncoding_UnspecifiedPositionEncoding, scip.PositionEncoding_UTF8CodeUnitOffsetFromLineStart:
 		return col, col == len(text) || col < len(text) && utf8.RuneStart(text[col])
@@ -123,14 +142,17 @@ func byteOffset(lines []string, pos scip.Position, encoding scip.PositionEncodin
 			if col == 0 {
 				return byteIndex, true
 			}
+
 			col--
 			if encoding == scip.PositionEncoding_UTF16CodeUnitOffsetFromLineStart && r > 0xffff {
 				col--
 			}
+
 			if col < 0 {
 				return 0, false
 			}
 		}
+
 		return len(text), col == 0
 	default:
 		return 0, false

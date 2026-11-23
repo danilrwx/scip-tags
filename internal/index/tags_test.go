@@ -14,7 +14,7 @@
 
 //go:build !js
 
-package main
+package index
 
 import (
 	"bytes"
@@ -26,10 +26,13 @@ import (
 )
 
 func TestTagsKeepHomonymsAndResolvePositions(t *testing.T) {
-	const definition = int32(scip.SymbolRole_Definition)
-	const forward = int32(scip.SymbolRole_ForwardDefinition)
-	const worker = "scip go test v1 Worker#Label()."
-	const manager = "scip go test v1 Manager#Label()."
+	const (
+		definition = int32(scip.SymbolRole_Definition)
+		forward    = int32(scip.SymbolRole_ForwardDefinition)
+		worker     = "scip go test v1 Worker#Label()."
+		manager    = "scip go test v1 Manager#Label()."
+	)
+
 	index := &scip.Index{Documents: []*scip.Document{
 		{RelativePath: "a.go", Occurrences: []*scip.Occurrence{
 			{Range: []int32{0, 0, 5}, Symbol: worker, SymbolRoles: definition},
@@ -38,22 +41,27 @@ func TestTagsKeepHomonymsAndResolvePositions(t *testing.T) {
 		{RelativePath: "b.go", Occurrences: []*scip.Occurrence{
 			{Range: []int32{0, 0, 5}, Symbol: manager, SymbolRoles: definition},
 		}},
-		{RelativePath: "call.go", PositionEncoding: scip.PositionEncoding_UTF16CodeUnitOffsetFromLineStart,
-			Occurrences: []*scip.Occurrence{{Range: []int32{0, 3, 8}, Symbol: worker}}},
+		{
+			RelativePath: "call.go", PositionEncoding: scip.PositionEncoding_UTF16CodeUnitOffsetFromLineStart,
+			Occurrences: []*scip.Occurrence{{Range: []int32{0, 3, 8}, Symbol: worker}},
+		},
 	}}
 	tree := fstest.MapFS{
 		"a.go":    {Data: []byte("Label()\nLabel();\n")},
 		"b.go":    {Data: []byte("Label()\n")},
 		"call.go": {Data: []byte("🚀 Label()\n")},
 	}
+
 	var out bytes.Buffer
 	if err := writeTags(&out, tree, index, index); err != nil {
 		t.Fatal(err)
 	}
+
 	tags := out.String()
 	if strings.Count(tags, "\nLabel\t") != 2 || strings.Contains(tags, "Label\ta.go\t2") {
 		t.Fatalf("duplicate definitions or forward declaration: %s", tags)
 	}
+
 	if !strings.Contains(tags, "__scip__:call.go:1:6\ta.go\t1;\"\tcolumn:1\tend:11\tsourcehash:") ||
 		strings.Contains(tags, "__scip__:call.go:1:6\tb.go") {
 		t.Fatalf("wrong target or UTF-16 position: %s", tags)

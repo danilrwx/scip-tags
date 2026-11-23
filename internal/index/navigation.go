@@ -12,29 +12,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package main
+package index
 
-type location struct {
+type Location struct {
 	Path   string `json:"path"`
 	Line   int    `json:"line"`
 	Column int    `json:"column"`
 }
 
-type span struct {
+type Span struct {
 	Start   int        `json:"start"`
 	End     int        `json:"end"`
-	Targets []location `json:"targets"`
+	Targets []Location `json:"targets"`
 }
 
-type sourceLine struct {
+type SourceLine struct {
 	Text  string `json:"text"`
-	Spans []span `json:"spans"`
+	Spans []Span `json:"spans"`
 }
 
-type navigation struct {
+type Navigation struct {
 	Version     int                            `json:"version"`
 	Repository  string                         `json:"repository"`
 	Revision    string                         `json:"revision"`
-	Files       map[string]map[int]*sourceLine `json:"files"`
+	Files       map[string]map[int]*SourceLine `json:"files"`
 	Diagnostics []string                       `json:"diagnostics,omitempty"`
 }

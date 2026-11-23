@@ -1,0 +1,31 @@
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - errorlint
+    - misspell
+    - nilerr
+    - unconvert
+    # wsl keeps one thing per thought: a blank line between statements that are
+    # not related, none between those that are
+    - wsl_v5
+  settings:
+    errcheck:
+      # writing to a terminal is not worth an error path
+      exclude-functions:
+        - fmt.Fprintln
+        - fmt.Fprintf
+        - fmt.Print
+        - fmt.Println
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+    # gofumpt is gofmt with the empty-line sloppiness removed: no blank line
+    # right after an opening brace or before a closing one. It does not invent
+    # blank lines, which is why it is here and wsl is not: a linter that puts a
+    # blank line between every guard turns one thought into four.
+    - gofumpt
