@@ -7,8 +7,8 @@
 [![Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
 `scip-tags` turns a [SCIP](https://github.com/scip-code/scip) index into a
-ctags-compatible `tags` file. Point at `worker.Label()`, press `gd`, and land on
-`Worker.Label` even if `Manager.Label` exists in the same project. Press
+ctags-compatible `tags` file. Point at `worker.Label()` and press `Ctrl-]` to jump
+to `Worker.Label` even if `Manager.Label` exists in the same project. Press
 `Ctrl-T` to go back.
 
 The indexer resolves symbols when you build the index. Vim reads the resulting
@@ -44,12 +44,16 @@ Clone this repository and add the plugin to your vimrc:
 
 ```vim
 source /path/to/scip-tags/vim/scip-tags.vim
-nmap gd <Plug>(ScipTagsDefinition)
 ```
 
-Put the cursor on a symbol and press `gd`. The plugin uses the file, line and
-column to look up the indexed definition. If you edit the line containing the
-symbol, regenerate the tags before jumping from that line again.
+Put the cursor on a symbol and press Vim’s built-in `Ctrl-]`. The plugin uses
+the file, line and column to look up the indexed definition. Use `g Ctrl-]` to
+choose between multiple targets and `Ctrl-T` to return. Vim looks up ordinary
+tags by name when there is no position tag at the cursor. Regenerate the tags
+after editing indexed source lines.
+
+The plugin uses Vim's `tagfunc`. If you already configured a tag function, Vim
+continues to use it.
 
 ## Reuse an index
 
@@ -76,7 +80,7 @@ document-scoped local IDs. Other cases cover UTF-8, UTF-16 and UTF-32 coordinate
 multiline ranges, and generated files outside the source root.
 
 CI runs the regression suite, `go vet`, and golangci-lint, then builds the CLI for
-Linux and OpenBSD/ARM. A separate headless Vim check exercised `gd` on two
+Linux and OpenBSD/ARM. A separate headless Vim check exercised `Ctrl-]` on two
 same-name Go methods, `Ctrl-T` back to the call site, and rejection of a changed
 source line.
 
