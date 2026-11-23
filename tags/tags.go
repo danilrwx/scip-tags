@@ -12,9 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !js
-
-package index
+// Package tags converts SCIP indexes to ctags-compatible tags.
+package tags
 
 import (
 	"bufio"
@@ -23,7 +22,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"os"
 	"slices"
 	"strings"
 	"unicode"
@@ -34,49 +32,15 @@ import (
 
 type tag struct {
 	name string
-	Location
+	location
 	local bool
 	end   int
 	hash  string
 }
 
-func ExportTags(w io.Writer, root string, paths []string) error {
-	var indexes []*scip.Index
-
-	for _, path := range paths {
-		index, err := ReadSCIP(path)
-		if err != nil {
-			return err
-		}
-
-		indexes = append(indexes, index)
-	}
-
-	if root == "" {
-		for i, index := range indexes {
-			project, err := SCIPRoot(index)
-			if err != nil {
-				return fmt.Errorf("%s: %w (or specify -root)", paths[i], err)
-			}
-
-			if root != "" && root != project {
-				return fmt.Errorf("%s: SCIP project root differs from %s", paths[i], root)
-			}
-
-			root = project
-		}
-	}
-
-	tree, err := os.OpenRoot(root)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tree.Close() }()
-
-	return writeTags(w, tree.FS(), indexes...)
-}
-
-func writeTags(w io.Writer, tree fs.FS, indexes ...*scip.Index) error {
+// Write emits sorted, ctags-compatible definitions and position tags. The
+// source tree must match the indexes and is used to resolve document paths.
+func Write(w io.Writer, tree fs.FS, indexes ...*scip.Index) error {
 	entries := make(map[tag]struct{})
 	sources := make(map[string][]string)
 
@@ -136,7 +100,7 @@ func writeTags(w io.Writer, tree fs.FS, indexes ...*scip.Index) error {
 				}
 
 				entries[tag{
-					name: name, Location: Location{path, int(source.Start.Line) + 1, start},
+					name: name, location: location{path, int(source.Start.Line) + 1, start},
 					local: strings.HasPrefix(occ.GetSymbol(), "local "),
 				}] = struct{}{}
 			}
@@ -152,7 +116,7 @@ func writeTags(w io.Writer, tree fs.FS, indexes ...*scip.Index) error {
 		lastLine           int
 	)
 
-	visitSCIPSpans(sources, indexes, func(path string, line int, text string, span Span) {
+	visitSCIPSpans(sources, indexes, func(path string, line int, text string, span occurrenceSpan) {
 		name := fmt.Sprintf("__scip__:%s:%d:%d", path, line, span.Start+1)
 		if path != lastPath || line != lastLine {
 			hash := sha256.Sum256([]byte(text))
@@ -160,7 +124,7 @@ func writeTags(w io.Writer, tree fs.FS, indexes ...*scip.Index) error {
 		}
 
 		for _, target := range span.Targets {
-			entries[tag{name: name, Location: target, end: span.End + 1, hash: lineHash}] = struct{}{}
+			entries[tag{name: name, location: target, end: span.End + 1, hash: lineHash}] = struct{}{}
 		}
 	})
 

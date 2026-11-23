@@ -12,21 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !js
-
-package index
+package main
 
 import (
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
 
+	"github.com/danilrwx/scip-tags/tags"
 	"github.com/scip-code/scip/bindings/go/scip"
 	"google.golang.org/protobuf/proto"
 )
 
-func ReadSCIP(path string) (*scip.Index, error) {
+func readSCIP(path string) (*scip.Index, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -40,7 +40,7 @@ func ReadSCIP(path string) (*scip.Index, error) {
 	return index, nil
 }
 
-func SCIPRoot(index *scip.Index) (string, error) {
+func scipRoot(index *scip.Index) (string, error) {
 	root, err := url.Parse(index.GetMetadata().GetProjectRoot())
 	if err != nil || root.Scheme != "file" || (root.Host != "" && root.Host != "localhost") ||
 		root.User != nil || root.RawQuery != "" || root.Fragment != "" || !filepath.IsAbs(root.Path) {
@@ -48,4 +48,40 @@ func SCIPRoot(index *scip.Index) (string, error) {
 	}
 
 	return filepath.Clean(root.Path), nil
+}
+
+func exportTags(w io.Writer, root string, paths []string) error {
+	var indexes []*scip.Index
+
+	for _, path := range paths {
+		index, err := readSCIP(path)
+		if err != nil {
+			return err
+		}
+
+		indexes = append(indexes, index)
+	}
+
+	if root == "" {
+		for i, index := range indexes {
+			project, err := scipRoot(index)
+			if err != nil {
+				return fmt.Errorf("%s: %w (or specify -root)", paths[i], err)
+			}
+
+			if root != "" && root != project {
+				return fmt.Errorf("%s: SCIP project root differs from %s", paths[i], root)
+			}
+
+			root = project
+		}
+	}
+
+	tree, err := os.OpenRoot(root)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tree.Close() }()
+
+	return tags.Write(w, tree.FS(), indexes...)
 }

@@ -24,6 +24,3 @@ jobs:
 
       - name: Build for OpenBSD ARM
         run: GOOS=openbsd GOARCH=arm GOARM=7 CGO_ENABLED=0 go build -o "$RUNNER_TEMP/scip-tags-openbsd-arm" ./cmd/scip-tags
-
-      - name: Build browser Wasm from source
-        run: GOOS=js GOARCH=wasm go build -o "$RUNNER_TEMP/code-index.wasm" ./cmd/scip-tags

@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !js
-
-package index
+package tags
 
 import (
 	"bytes"
@@ -53,7 +51,7 @@ func TestTagsKeepHomonymsAndResolvePositions(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := writeTags(&out, tree, index, index); err != nil {
+	if err := Write(&out, tree, index, index); err != nil {
 		t.Fatal(err)
 	}
 

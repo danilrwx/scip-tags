@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package index
+package tags
 
 import (
 	"reflect"
@@ -44,11 +44,11 @@ func TestBuildPreservesByteRangesAndScopesLocals(t *testing.T) {
 		"a.c": {"int x;", ` "é" +    x;`},
 		"b.c": {"int y;", "int x;", "int x = 0;"},
 	}
-	got := ResolveSCIP(sources, index)["a.c"][2]
+	got := collectSpans(sources, index)["a.c"][2]
 
-	want := &SourceLine{Text: sources["a.c"][1], Spans: []Span{
-		{Start: 10, End: 11, Targets: []Location{{Path: "a.c", Line: 1, Column: 4}}},
-		{Start: 10, End: 11, Targets: []Location{{Path: "b.c", Line: 3, Column: 4}}},
+	want := &sourceLine{Text: sources["a.c"][1], Spans: []occurrenceSpan{
+		{Start: 10, End: 11, Targets: []location{{Path: "a.c", Line: 1, Column: 4}}},
+		{Start: 10, End: 11, Targets: []location{{Path: "b.c", Line: 3, Column: 4}}},
 	}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %#v, want %#v", got, want)
@@ -94,9 +94,9 @@ func TestResolveSCIPEncodingsAndMultipleInputs(t *testing.T) {
 			{Range: []int32{0, 4, 7}, Symbol: "local 0", SymbolRoles: def},
 		}},
 	}}
-	got := ResolveSCIP(sources, indexA, indexB)
+	got := collectSpans(sources, indexA, indexB)
 
-	dest := []Location{{"defs.py", 1, 5}}
+	dest := []location{{"defs.py", 1, 5}}
 	if spans := got["use.ts"][1].Spans; len(spans) != 1 || spans[0].Start != 5 || spans[0].End != 10 ||
 		len(spans[0].Targets) != 1 || spans[0].Targets[0] != dest[0] {
 		t.Fatalf("wrong UTF-16 to UTF-32 jump: %#v", spans)
@@ -107,7 +107,32 @@ func TestResolveSCIPEncodingsAndMultipleInputs(t *testing.T) {
 	}
 
 	if spans := got["same-file.ts"][2].Spans; len(spans) != 1 || len(spans[0].Targets) != 1 ||
-		spans[0].Targets[0] != (Location{"same-file.ts", 1, 0}) {
+		spans[0].Targets[0] != (location{"same-file.ts", 1, 0}) {
 		t.Fatalf("local IDs collided across input indexes: %#v", spans)
 	}
+}
+
+type sourceLine struct {
+	Text  string
+	Spans []occurrenceSpan
+}
+
+func collectSpans(sources map[string][]string, indexes ...*scip.Index) map[string]map[int]*sourceLine {
+	files := make(map[string]map[int]*sourceLine)
+
+	visitSCIPSpans(sources, indexes, func(path string, line int, text string, span occurrenceSpan) {
+		rows := files[path]
+		if rows == nil {
+			rows = make(map[int]*sourceLine)
+			files[path] = rows
+		}
+
+		if rows[line] == nil {
+			rows[line] = &sourceLine{Text: text}
+		}
+
+		rows[line].Spans = append(rows[line].Spans, span)
+	})
+
+	return files
 }

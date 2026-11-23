@@ -1,104 +1,72 @@
 # scip-tags
 
-`scip-tags` converts [SCIP](https://github.com/scip-code/scip) indexes into
-ctags-compatible `tags` files. It reads the same SCIP format for C/C++, Go,
-Python, TypeScript, and any other language with a SCIP producer. Generate the
-index with your language's SCIP indexer before running the converter.
+**Jump to the right definition in Vim, even when two symbols have the same name.**
 
-## Build tags
+[![CI](https://github.com/danilrwx/scip-tags/actions/workflows/ci.yml/badge.svg)](https://github.com/danilrwx/scip-tags/actions/workflows/ci.yml)
+[![Go 1.26+](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go&logoColor=white)](go.mod)
+[![Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
-Build the CLI with Go 1.26 or later.
+`scip-tags` turns a [SCIP](https://github.com/scip-code/scip) index into a
+ctags-compatible `tags` file. Point at `worker.Label()`, press `gd`, and land on
+`Worker.Label` even if `Manager.Label` exists in the same project. Press
+`Ctrl-T` to go back.
+
+The indexer resolves symbols when you build the index. Vim reads the resulting
+tags locally, without a running language server.
+
+## Quick start
+
+Install the converter with Go 1.26 or later.
 
 ```sh
-go build -o "$HOME/.local/bin/scip-tags" ./cmd/scip-tags
+go install github.com/danilrwx/scip-tags/cmd/scip-tags@latest
 ```
 
-In the source root, write the tag file alongside the sources.
+From your project root, generate `index.scip` with your language's indexer, then
+convert it. For a Go project, for example:
 
 ```sh
-scip-tags -scip index.scip > tags.tmp && mv tags.tmp tags
+go install github.com/scip-code/scip-go/cmd/scip-go@latest
+scip-go
+scip-tags > tags.tmp && mv tags.tmp tags
 ```
 
-The CLI reads `index.scip` by default. Repeat `-scip` for several indexes of
-the same source tree. Source paths in the tag file are relative to that tree.
-If the index was generated elsewhere, point `-root` at the matching sources.
-Tags export also works outside a Git checkout.
+Open Vim in the project. Use `:tag Name` to jump by name and `:tselect Name` to
+list matching definitions. The converter works with any language that has a
+SCIP producer, including
+[C/C++](https://github.com/sourcegraph/scip-clang),
+[JavaScript and TypeScript](https://github.com/sourcegraph/scip-typescript), and
+[Java](https://github.com/scip-code/scip-java).
 
-Vim uses its built-in `Ctrl-]`, `:tag name`, and `:tselect name`. When
-distinct definitions have the same name, the tag file preserves them as
-separate entries. `:tselect` lists the candidates.
+### Jump from the cursor in Vim
 
-For an exact SCIP jump by cursor position, source `vim/scip-tags.vim` from
-your vimrc and bind its command to `gd`. It reads the same `tags` file and
-uses Vim's tag stack, so `Ctrl-T` returns to the call site.
+Clone this repository and add the plugin to your vimrc:
 
 ```vim
 source /path/to/scip-tags/vim/scip-tags.vim
 nmap gd <Plug>(ScipTagsDefinition)
 ```
 
-## Export a map for Patchtree
+Put the cursor on a symbol and press `gd`. The plugin uses the file, line and
+column to look up the indexed definition. If you edit the line containing the
+symbol, regenerate the tags before jumping from that line again.
 
-Patchtree uses a revision-pinned JSON map with occurrence ranges and resolved
-targets. Export it from the clean Git checkout used to build the SCIP index.
+## Reuse an index
 
-```sh
-scip-tags -format patchtree -repo https://github.com/owner/repo -scip index.scip > code-index.json
-```
-
-Load the map under **Settings → Code index → Import…** in Patchtree. JSON
-mode joins references to exact SCIP symbols, including when names collide.
-SCIP UTF-8, UTF-16 and UTF-32 positions are translated to UTF-8 byte offsets.
-The previous usage with `-repo` also selects the Patchtree format.
-
-## Embedded Go backend for Patchtree
-
-Build the browser artifact from the same source and toolchain as the native
-binary. Package both browser files with the extension.
+`scip-tags` reads `index.scip` by default. Repeat `-scip` to combine indexes
+for the same source tree, and use `-root` if the tree is at a different path
+than the one recorded in the index.
 
 ```sh
-GOOS=js GOARCH=wasm go build -o code-index.wasm ./cmd/scip-tags
-cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" .
+scip-tags -root . -scip go.scip -scip web.scip > tags.tmp && mv tags.tmp tags
 ```
 
-To build Patchtree with this checkout, set
-`PATCHTREE_CODE_INDEX_DIR=/path/to/scip-tags/cmd/scip-tags`.
+## Use from Go
 
-After starting the module with the Go runtime in a Web Worker, call
-`codeIndexGo(JSON.stringify(snapshot))`. It returns the navigation map as a JSON
-string or a JSON object with an `error` string. Native tools can send the same
-snapshot to `scip-tags -snapshot` on stdin and read the map from stdout.
-Errors from the CLI go to stderr with a nonzero exit status.
+The [`tags`](tags) package exposes `Write(w, source, indexes...)`. Pass an
+`io.Writer`, an `fs.FS` containing the matching source tree, and one or more
+decoded `*scip.Index` values.
 
-A version 1 snapshot carries the exact repository revision and the target build
-configuration. Supply source paths relative to the repository root, including
-`go.mod`.
+## License
 
-```json
-{
-  "version": 1,
-  "repository": "https://github.com/owner/repo",
-  "revision": "0123456789abcdef0123456789abcdef01234567",
-  "goos": "linux",
-  "goarch": "amd64",
-  "tags": [],
-  "sources": {
-    "go.mod": "module example.com/repo\n",
-    "example.go": "package example\nconst Label = \"example\"\nvar name = Label\n"
-  }
-}
-```
-
-The caller supplies source files from its checkout or repository API. The Go
-backend checks the root module or the local modules listed in the root
-`go.work`, including Go tests, with cgo disabled.
-Unresolved imports, including standard library and external modules, appear in
-`diagnostics`. References the checker resolves still appear in `files`.
-Patchtree packages the WASM backend. It passes a GitHub or GitLab tar.gz
-snapshot to `codeIndexGoArchive` and caches the resulting map by repository and
-commit. The browser uses Linux/amd64 with default build tags and cgo disabled.
-Dependency downloads and a versioned dependency cache are pending.
-
-Patchtree imports maps up to 64 MiB, builds maps up to 128 MiB and downloads
-archives up to 32 MiB compressed or 128 MiB expanded. Links use the review repository, so a
-fork's head must be accessible there for links to open.
+[Apache 2.0](LICENSE)

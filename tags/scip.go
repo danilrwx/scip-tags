@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package index
+package tags
 
 import (
 	"slices"
@@ -28,27 +28,19 @@ func isDefinition(occ *scip.Occurrence) bool {
 		occ.GetSymbolRoles()&int32(scip.SymbolRole_ForwardDefinition) == 0
 }
 
-func ResolveSCIP(sources map[string][]string, indexes ...*scip.Index) map[string]map[int]*SourceLine {
-	files := make(map[string]map[int]*SourceLine)
-
-	visitSCIPSpans(sources, indexes, func(path string, line int, text string, span Span) {
-		rows := files[path]
-		if rows == nil {
-			rows = make(map[int]*SourceLine)
-			files[path] = rows
-		}
-
-		if rows[line] == nil {
-			rows[line] = &SourceLine{Text: text}
-		}
-
-		rows[line].Spans = append(rows[line].Spans, span)
-	})
-
-	return files
+type location struct {
+	Path   string
+	Line   int
+	Column int
 }
 
-func visitSCIPSpans(sources map[string][]string, indexes []*scip.Index, visit func(path string, line int, text string, span Span)) {
+type occurrenceSpan struct {
+	Start   int
+	End     int
+	Targets []location
+}
+
+func visitSCIPSpans(sources map[string][]string, indexes []*scip.Index, visit func(path string, line int, text string, span occurrenceSpan)) {
 	// Local symbol IDs belong to a document in one input index.
 	key := func(index int, path, symbol string) string {
 		if strings.HasPrefix(symbol, "local ") {
@@ -57,7 +49,7 @@ func visitSCIPSpans(sources map[string][]string, indexes []*scip.Index, visit fu
 
 		return symbol
 	}
-	defs := make(map[string][]Location)
+	defs := make(map[string][]location)
 
 	for i, index := range indexes {
 		for _, doc := range index.Documents {
@@ -79,7 +71,7 @@ func visitSCIPSpans(sources map[string][]string, indexes []*scip.Index, visit fu
 
 				symbol := key(i, doc.RelativePath, occ.Symbol)
 
-				target := Location{doc.RelativePath, int(r.Start.Line) + 1, col}
+				target := location{doc.RelativePath, int(r.Start.Line) + 1, col}
 				if !slices.Contains(defs[symbol], target) {
 					defs[symbol] = append(defs[symbol], target)
 				}
@@ -119,7 +111,7 @@ func visitSCIPSpans(sources map[string][]string, indexes []*scip.Index, visit fu
 						continue
 					}
 
-					visit(doc.RelativePath, line+1, lines[line], Span{left, right, targets})
+					visit(doc.RelativePath, line+1, lines[line], occurrenceSpan{left, right, targets})
 				}
 			}
 		}
