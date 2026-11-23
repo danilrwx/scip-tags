@@ -1,42 +1,57 @@
-# Code navigation for Vim and Patchtree
+# code-index
 
-`code-index` builds a navigation map both clients can read. The map uses
-repository-relative paths, 1-based lines and 0-based UTF-8 byte offsets. Both
-clients match the indexed source line before looking up the token and preserve
-multiple possible targets.
+`code-index` converts [SCIP](https://github.com/scip-code/scip) indexes into
+ctags-compatible `tags` files. It reads the same SCIP format for C/C++, Go,
+Python, TypeScript, and any other language with a SCIP producer. Generate the
+index with your language's SCIP indexer before running the converter.
 
-## Native binary
+## Build tags
 
-Build from this directory with Go 1.26 or later.
+Build the CLI with Go 1.26 or later.
 
 ```sh
-mkdir -p "$HOME/.local/bin"
 go build -o "$HOME/.local/bin/code-index" .
 ```
 
-Run from a clean checkout of the commit you want to index. Use the HTTPS URL of
-the repository that owns the review.
+In the source root, write the tag file alongside the sources.
 
 ```sh
-code-index -go-source -repo https://github.com/owner/repo > code-index.json
+code-index -scip index.scip > tags.tmp && mv tags.tmp tags
 ```
 
-Set `-goos`, `-goarch` and `-tags` to select the target build. By default the
-native command targets the current OS and architecture. It uses Git to identify
-the commit and tracked files. The Go checker is included in the binary.
+The CLI reads `index.scip` by default. Repeat `-scip` for several indexes of
+the same source tree. Source paths in the tag file are relative to that tree.
+If the index was generated elsewhere, point `-root` at the matching sources.
+Tags export also works outside a Git checkout.
 
-The same binary can export an existing SCIP index. For C, use the SCIP file
-from `scip-clang` or its repaired version from `repair-scip`.
+Vim uses its built-in `Ctrl-]`, `:tag name`, and `:tselect name`. When
+distinct definitions have the same name, the tag file preserves them as
+separate entries. `:tselect` lists the candidates.
+
+For an exact SCIP jump by cursor position, source `vim/code-index.vim` from
+your vimrc and bind its command to `gd`. It reads the same `tags` file and
+uses Vim's tag stack, so `Ctrl-T` returns to the call site.
+
+```vim
+source /path/to/code-index/vim/code-index.vim
+nmap gd <Plug>(CodeIndexDefinition)
+```
+
+## Export a map for Patchtree
+
+Patchtree uses a revision-pinned JSON map with occurrence ranges and resolved
+targets. Export it from the clean Git checkout used to build the SCIP index.
 
 ```sh
-code-index -repo https://github.com/owner/repo -scip index.scip > code-index.json
+code-index -format patchtree -repo https://github.com/owner/repo -scip index.scip > code-index.json
 ```
 
-Repeat `-scip` to merge indexes for the same checkout. SCIP coordinates in
-UTF-8, UTF-16, and UTF-32 are converted to UTF-8 byte offsets in the map.
-The source files on disk must be UTF-8.
+Load the map under **Settings → Code index → Import…** in Patchtree. JSON
+mode joins references to exact SCIP symbols, including when names collide.
+SCIP UTF-8, UTF-16 and UTF-32 positions are translated to UTF-8 byte offsets.
+The previous usage with `-repo` also selects the Patchtree format.
 
-## Embed the same Go indexer
+## Embedded Go backend for Patchtree
 
 Build the browser artifact from the same source and toolchain as the native
 binary. Package both browser files with the extension.
@@ -80,28 +95,6 @@ Patchtree packages the WASM backend. It passes a GitHub or GitLab tar.gz
 snapshot to `codeIndexGoArchive` and caches the resulting map by repository and
 commit. The browser uses Linux/amd64 with default build tags and cgo disabled.
 Dependency downloads and a versioned dependency cache are pending.
-
-## Use the map
-
-- **Patchtree** — open the PR, MR or GitHub commit diff and choose **Settings → Code index →
-  Index Go**. Patchtree downloads a snapshot of the head commit and keeps its
-  index in the browser for 30 days. Views of the same repository and commit
-  reuse the index across reloads and compatible extension updates. A partial index can still resolve
-  project-local references. **Import…** also accepts a map built by the CLI.
-  In **All commits**, click an indexed symbol on the new side. A definition
-  in the same file jumps directly to its line, expanding context as needed.
-  For another file, choose a path and line in the card to read the file at that
-  revision in Patchtree. Click symbols in the file to follow definitions.
-  Use the back button or Alt+Left to retrace jumps. Escape returns to the diff.
-  Right-click an indexed symbol or press Shift+F12 at the caret to see its
-  indexed references, grouped by file. Choose a reference to jump to its line.
-  The external-link button opens the pinned line on the hosting site.
-  Ctrl-click (Cmd-click on macOS) opens a unique definition there directly.
-  A manual import lasts until reload.
-- **Vim** — keep `code-index.json` at the repository root. Source
-  `vim/code-index.vim` from your vimrc. Use `:CodeIndexDefinition` under the
-  cursor and Ctrl+T to return. To bind the command to `gd`, add
-  `nmap gd <Plug>(CodeIndexDefinition)` to your vimrc.
 
 Patchtree imports maps up to 64 MiB, builds maps up to 128 MiB and downloads
 archives up to 32 MiB compressed or 128 MiB expanded. Links use the review repository, so a

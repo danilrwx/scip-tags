@@ -61,6 +61,8 @@ func loadSources(root string, index *scip.Index, tracked map[string]bool) (map[s
 
 func run() error {
 	repository := flag.String("repo", "", "HTTPS URL of the reviewed repository (without .git)")
+	format := flag.String("format", "", "output format: tags (default for SCIP) or patchtree")
+	sourceRoot := flag.String("root", "", "source root for tags (default: SCIP project root)")
 	var indexPaths []string
 	flag.Func("scip", "SCIP index built from the current Git checkout (repeatable, default index.scip)", func(path string) error {
 		indexPaths = append(indexPaths, path)
@@ -74,6 +76,28 @@ func run() error {
 	flag.Parse()
 	if *snapshot && *goSource || (*snapshot || *goSource) && len(indexPaths) != 0 {
 		return fmt.Errorf("choose -snapshot, -go-source or -scip")
+	}
+	if len(indexPaths) == 0 {
+		indexPaths = []string{"index.scip"}
+	}
+	if *format == "" {
+		*format = "tags"
+		if *snapshot || *goSource || *repository != "" {
+			*format = "patchtree"
+		}
+	}
+	switch *format {
+	case "tags", "ctags":
+		if *snapshot || *goSource {
+			return fmt.Errorf("tags output requires a SCIP index")
+		}
+		return exportTags(os.Stdout, *sourceRoot, indexPaths)
+	case "patchtree":
+		if *sourceRoot != "" {
+			return fmt.Errorf("-root applies to tags output")
+		}
+	default:
+		return fmt.Errorf("unknown output format %q (use tags or patchtree)", *format)
 	}
 	if *snapshot {
 		result, err := indexGoJSON(os.Stdin)
@@ -123,32 +147,25 @@ func run() error {
 			return err
 		}
 	} else {
-		if len(indexPaths) == 0 {
-			indexPaths = []string{"index.scip"}
-		}
 		sources := make(map[string][]string)
 		var indexes []*scip.Index
 		for _, path := range indexPaths {
-			data, err := os.ReadFile(path)
+			index, err := readSCIP(path)
 			if err != nil {
 				return err
 			}
-			var index scip.Index
-			if err := proto.Unmarshal(data, &index); err != nil {
-				return fmt.Errorf("%s: %w", path, err)
-			}
-			indexRoot, err := url.Parse(index.GetMetadata().GetProjectRoot())
-			if err != nil || indexRoot.Scheme != "file" || filepath.Clean(indexRoot.Path) != root {
+			indexRoot, err := scipRoot(index)
+			if err != nil || indexRoot != root {
 				return fmt.Errorf("%s: SCIP project root must be %s", path, root)
 			}
-			loaded, err := loadSources(root, &index, tracked)
+			loaded, err := loadSources(root, index, tracked)
 			if err != nil {
 				return err
 			}
 			for path, lines := range loaded {
 				sources[path] = lines
 			}
-			indexes = append(indexes, &index)
+			indexes = append(indexes, index)
 		}
 		files := resolveSCIP(sources, indexes...)
 		if len(files) == 0 {
@@ -160,6 +177,27 @@ func run() error {
 		return fmt.Errorf("checkout changed during export")
 	}
 	return json.NewEncoder(os.Stdout).Encode(result)
+}
+
+func readSCIP(path string) (*scip.Index, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	index := new(scip.Index)
+	if err := proto.Unmarshal(data, index); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return index, nil
+}
+
+func scipRoot(index *scip.Index) (string, error) {
+	root, err := url.Parse(index.GetMetadata().GetProjectRoot())
+	if err != nil || root.Scheme != "file" || (root.Host != "" && root.Host != "localhost") ||
+		root.User != nil || root.RawQuery != "" || root.Fragment != "" || !filepath.IsAbs(root.Path) {
+		return "", fmt.Errorf("SCIP project root must be an absolute local file URL")
+	}
+	return filepath.Clean(root.Path), nil
 }
 
 func main() {

@@ -23,7 +23,28 @@ import (
 	"github.com/scip-code/scip/bindings/go/scip"
 )
 
+func isDefinition(occ *scip.Occurrence) bool {
+	return occ.GetSymbol() != "" && occ.GetSymbolRoles()&int32(scip.SymbolRole_Definition) != 0 &&
+		occ.GetSymbolRoles()&int32(scip.SymbolRole_ForwardDefinition) == 0
+}
+
 func resolveSCIP(sources map[string][]string, indexes ...*scip.Index) map[string]map[int]*sourceLine {
+	files := make(map[string]map[int]*sourceLine)
+	visitSCIPSpans(sources, indexes, func(path string, line int, text string, span span) {
+		rows := files[path]
+		if rows == nil {
+			rows = make(map[int]*sourceLine)
+			files[path] = rows
+		}
+		if rows[line] == nil {
+			rows[line] = &sourceLine{Text: text}
+		}
+		rows[line].Spans = append(rows[line].Spans, span)
+	})
+	return files
+}
+
+func visitSCIPSpans(sources map[string][]string, indexes []*scip.Index, visit func(path string, line int, text string, span span)) {
 	// Local symbol IDs belong to a document in one input index.
 	key := func(index int, path, symbol string) string {
 		if strings.HasPrefix(symbol, "local ") {
@@ -36,8 +57,7 @@ func resolveSCIP(sources map[string][]string, indexes ...*scip.Index) map[string
 		for _, doc := range index.Documents {
 			lines := sources[doc.RelativePath]
 			for _, occ := range doc.Occurrences {
-				if occ.Symbol == "" || occ.SymbolRoles&int32(scip.SymbolRole_Definition) == 0 ||
-					occ.SymbolRoles&int32(scip.SymbolRole_ForwardDefinition) != 0 {
+				if !isDefinition(occ) {
 					continue
 				}
 				r, ok := occ.SourceRange()
@@ -57,7 +77,6 @@ func resolveSCIP(sources map[string][]string, indexes ...*scip.Index) map[string
 		}
 	}
 
-	files := make(map[string]map[int]*sourceLine)
 	for i, index := range indexes {
 		for _, doc := range index.Documents {
 			lines := sources[doc.RelativePath]
@@ -83,20 +102,11 @@ func resolveSCIP(sources map[string][]string, indexes ...*scip.Index) map[string
 					if left >= right {
 						continue
 					}
-					rows := files[doc.RelativePath]
-					if rows == nil {
-						rows = make(map[int]*sourceLine)
-						files[doc.RelativePath] = rows
-					}
-					if rows[line+1] == nil {
-						rows[line+1] = &sourceLine{Text: lines[line]}
-					}
-					rows[line+1].Spans = append(rows[line+1].Spans, span{left, right, targets})
+					visit(doc.RelativePath, line+1, lines[line], span{left, right, targets})
 				}
 			}
 		}
 	}
-	return files
 }
 
 func byteOffset(lines []string, pos scip.Position, encoding scip.PositionEncoding) (int, bool) {
