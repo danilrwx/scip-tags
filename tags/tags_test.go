@@ -65,3 +65,29 @@ func TestTagsKeepHomonymsAndResolvePositions(t *testing.T) {
 		t.Fatalf("wrong target or UTF-16 position: %s", tags)
 	}
 }
+
+func TestWriteSkipsGeneratedDocumentsOutsideSourceRoot(t *testing.T) {
+	const definition = int32(scip.SymbolRole_Definition)
+
+	index := &scip.Index{Documents: []*scip.Document{
+		{RelativePath: "../go-build/generated.go", Occurrences: []*scip.Occurrence{
+			{Range: []int32{0, 0, 5}, Symbol: "generated", SymbolRoles: definition},
+		}},
+		{RelativePath: "main.go", Occurrences: []*scip.Occurrence{
+			{Range: []int32{0, 0, 4}, Symbol: "main", SymbolRoles: definition},
+			{Range: []int32{1, 0, 5}, Symbol: "generated"},
+		}},
+	}}
+	tree := fstest.MapFS{"main.go": {Data: []byte("main\nother\n")}}
+
+	var out bytes.Buffer
+	if err := Write(&out, tree, index); err != nil {
+		t.Fatal(err)
+	}
+
+	result := out.String()
+	if !strings.Contains(result, "\nmain\tmain.go\t1") || strings.Contains(result, "generated.go") ||
+		strings.Contains(result, "__scip__:main.go:2:") {
+		t.Fatalf("unexpected tags: %s", result)
+	}
+}

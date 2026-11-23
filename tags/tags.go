@@ -47,6 +47,11 @@ func Write(w io.Writer, tree fs.FS, indexes ...*scip.Index) error {
 	for _, index := range indexes {
 		for _, doc := range index.GetDocuments() {
 			path := doc.GetRelativePath()
+			// Some indexers include generated files outside the project root.
+			if path == ".." || strings.HasPrefix(path, "../") {
+				continue
+			}
+
 			if !fs.ValidPath(path) || path == "." || strings.ContainsRune(path, '\\') || strings.ContainsFunc(path, unicode.IsControl) {
 				return fmt.Errorf("unsupported SCIP document path %q", path)
 			}

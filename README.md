@@ -67,6 +67,39 @@ The [`tags`](tags) package exposes `Write(w, source, indexes...)`. Pass an
 `io.Writer`, an `fs.FS` containing the matching source tree, and one or more
 decoded `*scip.Index` values.
 
+## Tests and accuracy
+
+Run the regression suite with `go test ./...`. It checks that same-name methods
+and file-local symbols keep their own definitions, forward declarations do not
+replace definitions, and merging indexes preserves both versioned symbols and
+document-scoped local IDs. Other cases cover UTF-8, UTF-16 and UTF-32 coordinates,
+multiline ranges, and generated files outside the source root.
+
+CI runs the regression suite, `go vet`, and golangci-lint, then builds the CLI for
+Linux and OpenBSD/ARM. A separate headless Vim check exercised `gd` on two
+same-name Go methods, `Ctrl-T` back to the call site, and rejection of a changed
+source line.
+
+### Definition benchmark
+
+We checked the tags emitted by `scip-tags` at known reference positions in
+`golang.org/x/mod`, Lua, and libevent. Each count below is a correct file and
+line. The ctags baseline uses Vim's first name match. The SCIP columns count
+unambiguous destinations from the generated tags.
+
+| Project | References | Universal Ctags | Language server | Stock SCIP → tags | Repaired SCIP → tags |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `golang.org/x/mod`, within the module | 2,205 | 1,265 | 2,205 (gopls) | 2,202 | — |
+| Lua 5.4.9 | 2,656 | 1,267 | 2,644 (clangd) | 1,750 | 2,017 |
+| libevent 2.1.13 | 2,900 | 1,512 | 2,894 (clangd) | 1,777 | 2,295 |
+
+The C cases include same-name fields and macro arguments. The repaired column
+uses C indexes with macro-argument positions corrected before conversion.
+With the project-only Go index, zero of 200 additional references to definitions
+outside the module resolved to the expected location. Coverage depends on the
+definitions and occurrence positions supplied by the input indexes.
+The benchmark was run separately from CI.
+
 ## License
 
 [Apache 2.0](LICENSE)
