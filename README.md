@@ -27,7 +27,7 @@ convert it. For a Go project, for example:
 
 ```sh
 go install github.com/scip-code/scip-go/cmd/scip-go@latest
-scip-go
+scip-go index
 scip-tags > tags.tmp && mv tags.tmp tags
 ```
 
@@ -54,6 +54,31 @@ after editing indexed source lines.
 
 The plugin uses Vim's `tagfunc`. If you already configured a tag function, Vim
 continues to use it.
+
+### Refresh from Vim
+
+Set `g:scip_tags_update_command` in your vimrc and run `:ScipTagsUpdate` to build
+or refresh the index in the background. Vim runs the command from the nearest
+directory with a `tags` file, the Git root, or Vim's working directory, in that
+order. Add the following setting for a Go project.
+
+```vim
+let g:scip_tags_update_command =
+      \ 'tmp=$(mktemp -d ./.scip-tags.XXXXXXXX) && '
+      \ . 'trap ''rm -rf "$tmp"'' 0 && '
+      \ . 'scip-go index -o "$tmp/index.scip" && '
+      \ . 'scip-tags -scip "$tmp/index.scip" > "$tmp/tags" && mv "$tmp/tags" tags'
+```
+
+Point the setting at your own script to use a different SCIP indexer or an
+incremental build. Publish the new `tags` by renaming a temporary file in the
+project directory after the indexer and converter succeed.
+
+Automatic refresh starts off. To enable it, add
+`let g:scip_tags_auto_update = 1` to your vimrc. Vim waits 1.5 seconds after the
+last save and runs one job at a time per project in the current Vim instance.
+You can also set
+`b:scip_tags_update_command` or `b:scip_tags_auto_update` for individual buffers.
 
 ## Reuse an index
 

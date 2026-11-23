@@ -19,6 +19,7 @@ jobs:
 
       - run: go vet ./...
       - run: go test ./...
+      - run: vim -Nu NONE -i NONE -n -es -S vim/test-update.vim
       - run: gofmt -l . | tee /tmp/fmt && test ! -s /tmp/fmt
       - run: go build -o "$RUNNER_TEMP/scip-tags" ./cmd/scip-tags
 

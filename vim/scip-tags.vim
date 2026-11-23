@@ -16,6 +16,12 @@ if exists('g:loaded_scip_tags')
   finish
 endif
 let g:loaded_scip_tags = 1
+let s:updates = {}
+
+function! s:SearchPath(path) abort
+  let directory = fnamemodify(resolve(a:path), ':h')
+  return escape(directory, ' ,;') . ';'
+endfunction
 
 function! s:Tag(pattern, flags, info) abort
   if a:flags !~# 'c' && get(a:info, 'user_data', '') !=# 'scip-tags'
@@ -23,7 +29,7 @@ function! s:Tag(pattern, flags, info) abort
   endif
 
   let source = resolve(expand('%:p'))
-  let tags = findfile('tags', escape(fnamemodify(source, ':h'), ' ,;') . ';')
+  let tags = findfile('tags', s:SearchPath(source))
   if empty(tags)
     return v:null
   endif
@@ -73,6 +79,101 @@ function! s:Tag(pattern, flags, info) abort
   return indexed ? targets : v:null
 endfunction
 
+function! s:UpdateFinished(root, output, job, status, ...) abort
+  let update = s:updates[a:root]
+  let update.running = 0
+  unlet! update.job
+  if a:status != 0
+    echohl WarningMsg
+    echomsg 'scip-tags: update failed in ' . a:root . ' (exit ' . a:status . ')'
+    if filereadable(a:output)
+      for line in readfile(a:output, '', -3)
+        echomsg line
+      endfor
+    endif
+    echohl None
+  endif
+  call delete(a:output)
+
+  if update.timer != -1
+    return
+  endif
+  if update.queued
+    call s:StartUpdate(a:root, -1)
+  else
+    call remove(s:updates, a:root)
+  endif
+endfunction
+
+function! s:StartUpdate(root, timer) abort
+  let update = s:updates[a:root]
+  let update.timer = -1
+  if update.running
+    let update.queued = 1
+    return
+  endif
+  let update.running = 1
+  let update.queued = 0
+  let output = tempname()
+  let args = ['sh', '-c', "exec </dev/null >\"$1\" 2>&1\nshift\n" . update.command, 'scip-tags', output]
+  let Done = function('s:UpdateFinished', [a:root, output])
+  try
+    if has('nvim')
+      let failed = jobstart(args, {'cwd': a:root, 'on_exit': Done}) <= 0
+    else
+      let job = job_start(args, {'cwd': a:root, 'exit_cb': Done})
+      let update.job = job
+      let failed = job_status(job) ==# 'fail'
+    endif
+  catch /^Vim/
+    let failed = 1
+  endtry
+  if failed
+    call s:UpdateFinished(a:root, output, 0, 127)
+  endif
+endfunction
+
+function! s:Update(buffer, path, delay) abort
+  let command = getbufvar(a:buffer, 'scip_tags_update_command', get(g:, 'scip_tags_update_command', ''))
+  if empty(command) || (!has('nvim') && !has('job'))
+    if a:delay == 0
+      echohl WarningMsg
+      echomsg empty(command) ? 'scip-tags: set g:scip_tags_update_command' : 'scip-tags: job support is required'
+      echohl None
+    endif
+    return
+  endif
+
+  let search = s:SearchPath(a:path)
+  let marker = findfile('tags', search)
+  if empty(marker)
+    let marker = finddir('.git', search)
+  endif
+  if empty(marker)
+    let marker = findfile('.git', search)
+  endif
+  let root = resolve(fnamemodify(empty(marker) ? getcwd() : fnamemodify(marker, ':h'), ':p'))
+  let update = get(s:updates, root, {'timer': -1, 'running': 0, 'queued': 0})
+  let s:updates[root] = update
+  let update.command = command
+  let update.queued = 0
+  if update.timer != -1
+    call timer_stop(update.timer)
+  endif
+  if a:delay > 0
+    let update.timer = timer_start(a:delay, function('s:StartUpdate', [root]))
+  else
+    call s:StartUpdate(root, -1)
+  endif
+endfunction
+
+function! s:AutoUpdate(buffer, path) abort
+  if exists('*timer_start') && getbufvar(a:buffer, '&buftype') ==# '' &&
+        \ getbufvar(a:buffer, 'scip_tags_auto_update', get(g:, 'scip_tags_auto_update', 0))
+    call s:Update(a:buffer, a:path, 1500)
+  endif
+endfunction
+
 if empty(&g:tagfunc)
   let &g:tagfunc = expand('<SID>') . 'Tag'
   if empty(&l:tagfunc)
@@ -85,3 +186,10 @@ nnoremap <Plug>(ScipTagsDefinition) <C-]>
 
 command! CodeIndexDefinition ScipTagsDefinition
 nmap <Plug>(CodeIndexDefinition) <Plug>(ScipTagsDefinition)
+
+command! ScipTagsUpdate call s:Update(bufnr('%'), expand('%:p'), 0)
+
+augroup scip_tags_update
+  autocmd!
+  autocmd BufWritePost * call s:AutoUpdate(str2nr(expand('<abuf>')), expand('<afile>:p'))
+augroup END
