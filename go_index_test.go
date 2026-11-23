@@ -103,6 +103,35 @@ func TestIndexGoRejectsPathOutsideSnapshot(t *testing.T) {
 	}
 }
 
+func TestIndexGoWorkspace(t *testing.T) {
+	const src = "var _ = lib.Value"
+	index, err := indexGo(goSnapshot{
+		Version: 1, Repository: "example.com/repo", Revision: "abc", GOOS: "linux", GOARCH: "amd64",
+		Sources: map[string]string{
+			"go.work":           "go 1.26\nuse (\n ./app\n ./lib\n)\n",
+			"app/go.mod":        "module example.com/app\n",
+			"app/use.go":        "package app\nimport \"example.com/lib\"\n" + src + "\n",
+			"lib/go.mod":        "module example.com/lib\n",
+			"lib/def.go":        "package lib\nconst Value = 42\n",
+			"lib/unused/go.mod": "module example.com/unused\n",
+			"lib/unused/use.go": "package unused\nconst Unused = 9\n",
+		},
+	})
+	if err != nil || len(index.Diagnostics) != 0 {
+		t.Fatalf("workspace index: %v, diagnostics: %v", err, index.Diagnostics)
+	}
+	row := index.Files["app/use.go"][3]
+	for _, s := range row.Spans {
+		if s.Start == strings.Index(src, "Value") && s.Targets[0].Path == "lib/def.go" {
+			if index.Files["lib/unused/use.go"] != nil {
+				t.Fatal("nested module outside go.work was indexed")
+			}
+			return
+		}
+	}
+	t.Fatalf("missing cross-module jump in %#v", row.Spans)
+}
+
 func TestEmbeddedTypeDoesNotJumpToItselfWhenImportIsMissing(t *testing.T) {
 	src := "package example\nimport \"bytes\"\ntype printer struct { bytes.Buffer }\n"
 	index, err := indexGo(goSnapshot{

@@ -72,7 +72,8 @@ configuration. Supply source paths relative to the repository root, including
 ```
 
 The caller supplies source files from its checkout or repository API. The Go
-backend currently checks one root module, including Go tests, with cgo disabled.
+backend checks the root module or the local modules listed in the root
+`go.work`, including Go tests, with cgo disabled.
 Unresolved imports, including standard library and external modules, appear in
 `diagnostics`. References the checker resolves still appear in `files`.
 Patchtree packages the WASM backend. It passes a GitHub or GitLab tar.gz
@@ -82,15 +83,18 @@ Dependency downloads and a versioned dependency cache are pending.
 
 ## Use the map
 
-- **Patchtree** — open the PR or MR diff and choose **Settings → Code index →
+- **Patchtree** — open the PR, MR or GitHub commit diff and choose **Settings → Code index →
   Index Go**. Patchtree downloads a snapshot of the head commit and keeps its
   index in the browser for 30 days. Views of the same repository and commit
   reuse the index across reloads and compatible extension updates. A partial index can still resolve
   project-local references. **Import…** also accepts a map built by the CLI.
-  In **All commits**, click an indexed symbol on the new side to see its
-  definitions. Choose a path and line in the card to read the file at that
+  In **All commits**, click an indexed symbol on the new side. A definition
+  in the same file jumps directly to its line, expanding context as needed.
+  For another file, choose a path and line in the card to read the file at that
   revision in Patchtree. Click symbols in the file to follow definitions.
   Use the back button or Alt+Left to retrace jumps. Escape returns to the diff.
+  Right-click an indexed symbol or press Shift+F12 at the caret to see its
+  indexed references, grouped by file. Choose a reference to jump to its line.
   The external-link button opens the pinned line on the hosting site.
   Ctrl-click (Cmd-click on macOS) opens a unique definition there directly.
   A manual import lasts until reload.
@@ -99,6 +103,6 @@ Dependency downloads and a versioned dependency cache are pending.
   cursor and Ctrl+T to return. To bind the command to `gd`, add
   `nmap gd <Plug>(CodeIndexDefinition)` to your vimrc.
 
-Patchtree imports maps up to 64 MiB and downloads archives up to 32 MiB
-compressed or 128 MiB expanded. Links use the review repository, so a
+Patchtree imports maps up to 64 MiB, builds maps up to 128 MiB and downloads
+archives up to 32 MiB compressed or 128 MiB expanded. Links use the review repository, so a
 fork's head must be accessible there for links to open.

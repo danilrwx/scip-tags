@@ -56,7 +56,7 @@ func indexGoArchive(r io.Reader, input goSnapshot) (navigation, error) {
 		if !ok || !fs.ValidPath(name) || strings.Contains(name, "\\") {
 			continue
 		}
-		if path.Base(name) != "go.mod" && !strings.HasSuffix(name, ".go") {
+		if name != "go.work" && path.Base(name) != "go.mod" && !strings.HasSuffix(name, ".go") {
 			continue
 		}
 		total += header.Size

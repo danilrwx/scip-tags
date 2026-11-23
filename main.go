@@ -109,7 +109,7 @@ func run() error {
 		input := goSnapshot{Version: 1, Repository: repoURL, Revision: revision, GOOS: *goos, GOARCH: *goarch,
 			Tags: buildTags, Sources: make(map[string]string)}
 		for name := range tracked {
-			if !strings.HasSuffix(name, ".go") && filepath.Base(name) != "go.mod" {
+			if name != "go.work" && !strings.HasSuffix(name, ".go") && filepath.Base(name) != "go.mod" {
 				continue
 			}
 			data, err := os.ReadFile(filepath.Join(root, name))

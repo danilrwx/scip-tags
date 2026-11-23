@@ -44,18 +44,52 @@ type goSnapshot struct {
 }
 
 type goIndexer struct {
-	context   build.Context
-	snapshot  map[string]string
-	lines     map[string][]string
-	module    string
-	goVersion string
-	fset      *token.FileSet
-	packages  map[string][]*ast.File
-	tests     map[string][]*ast.File
-	checked   map[string]*types.Package
-	checking  map[string]bool
-	result    navigation
-	sizes     types.Sizes
+	context  build.Context
+	snapshot map[string]string
+	lines    map[string][]string
+	versions map[string]string
+	fset     *token.FileSet
+	packages map[string][]*ast.File
+	tests    map[string][]*ast.File
+	checked  map[string]*types.Package
+	checking map[string]bool
+	result   navigation
+	sizes    types.Sizes
+}
+
+func snapshotModules(sources map[string]string) (map[string]*modfile.File, error) {
+	dirs := []string{"."}
+	if text, ok := sources["go.work"]; ok {
+		workspace, err := modfile.ParseWork("go.work", []byte(text), nil)
+		if err != nil {
+			return nil, err
+		}
+		dirs = nil
+		for _, use := range workspace.Use {
+			if dir := path.Clean(use.Path); fs.ValidPath(dir) {
+				dirs = append(dirs, dir)
+			}
+		}
+	}
+	modules := make(map[string]*modfile.File)
+	for _, dir := range dirs {
+		name := path.Join(dir, "go.mod")
+		text, ok := sources[name]
+		if !ok {
+			continue
+		}
+		mod, err := modfile.ParseLax(name, []byte(text), nil)
+		if err != nil {
+			return nil, err
+		}
+		if mod.Module != nil {
+			modules[dir] = mod
+		}
+	}
+	if len(modules) == 0 {
+		return nil, fmt.Errorf("no Go modules found in go.work or root go.mod")
+	}
+	return modules, nil
 }
 
 func indexGoJSON(reader io.Reader) (navigation, error) {
@@ -77,24 +111,18 @@ func indexGo(snapshot goSnapshot) (navigation, error) {
 	if sizes == nil {
 		return navigation{}, fmt.Errorf("unsupported Go architecture %q", snapshot.GOARCH)
 	}
-	mod, err := modfile.ParseLax("go.mod", []byte(snapshot.Sources["go.mod"]), nil)
+	modules, err := snapshotModules(snapshot.Sources)
 	if err != nil {
 		return navigation{}, err
 	}
-	if mod.Module == nil {
-		return navigation{}, fmt.Errorf("root go.mod with a module directive is required")
-	}
 	idx := &goIndexer{
-		context: build.Default, snapshot: snapshot.Sources, module: mod.Module.Mod.Path,
+		context: build.Default, snapshot: snapshot.Sources, versions: map[string]string{},
 		fset: token.NewFileSet(), packages: map[string][]*ast.File{},
 		tests: map[string][]*ast.File{},
 		lines: map[string][]string{}, sizes: sizes,
 		checked: map[string]*types.Package{}, checking: map[string]bool{},
 		result: navigation{Version: 1, Repository: snapshot.Repository, Revision: snapshot.Revision,
 			Files: make(map[string]map[int]*sourceLine)},
-	}
-	if mod.Go != nil {
-		idx.goVersion = "go" + mod.Go.Version
 	}
 	idx.context.GOOS, idx.context.GOARCH = snapshot.GOOS, snapshot.GOARCH
 	idx.context.BuildTags = snapshot.Tags
@@ -118,10 +146,10 @@ func indexGo(snapshot goSnapshot) (navigation, error) {
 	}
 	slices.Sort(paths)
 	for _, name := range paths {
-		idx.addFile(name)
+		idx.addFile(name, modules)
 	}
 	if len(idx.packages) == 0 && len(idx.tests) == 0 {
-		return navigation{}, fmt.Errorf("no Go packages for %s/%s in %s", snapshot.GOOS, snapshot.GOARCH, idx.module)
+		return navigation{}, fmt.Errorf("no Go packages for %s/%s", snapshot.GOOS, snapshot.GOARCH)
 	}
 	// Checking all packages keeps results independent of the caller's entry file.
 	packages := make([]string, 0, len(idx.packages))
@@ -145,7 +173,7 @@ func indexGo(snapshot goSnapshot) (navigation, error) {
 		}
 		var testPackage *types.Package
 		if len(internal) > 0 {
-			testPackage, _ = idx.check(name, append(slices.Clone(production), internal...), idx, true)
+			testPackage, _ = idx.check(name, idx.versions[name], append(slices.Clone(production), internal...), idx, true)
 		}
 		if len(external) > 0 {
 			importer := packageImporter(func(path string) (*types.Package, error) {
@@ -154,7 +182,7 @@ func indexGo(snapshot goSnapshot) (navigation, error) {
 				}
 				return idx.Import(path)
 			})
-			_, _ = idx.check(name+"_test", external, importer, true)
+			_, _ = idx.check(name+"_test", idx.versions[name], external, importer, true)
 		}
 	}
 	for _, rows := range idx.result.Files {
@@ -167,17 +195,27 @@ func indexGo(snapshot goSnapshot) (navigation, error) {
 	return idx.result, nil
 }
 
-func (idx *goIndexer) addFile(name string) {
+func (idx *goIndexer) addFile(name string, modules map[string]*modfile.File) {
 	dir, base := path.Split(name)
 	if !strings.HasSuffix(base, ".go") {
 		return
 	}
-	for d := path.Dir(name); d != "."; d = path.Dir(d) {
+	var root string
+	for d := path.Dir(name); ; d = path.Dir(d) {
 		part := path.Base(d)
-		_, nestedModule := idx.snapshot[path.Join(d, "go.mod")]
-		if nestedModule || part == "vendor" || part == "testdata" || strings.HasPrefix(part, ".") || strings.HasPrefix(part, "_") {
+		if d != "." && (part == "vendor" || part == "testdata" || strings.HasPrefix(part, ".") || strings.HasPrefix(part, "_")) {
 			return
 		}
+		if _, candidate := idx.snapshot[path.Join(d, "go.mod")]; candidate && root == "" {
+			root = d
+		}
+		if d == "." {
+			break
+		}
+	}
+	mod := modules[root]
+	if mod == nil {
+		return
 	}
 	match, err := idx.context.MatchFile(dir, base)
 	if err != nil {
@@ -204,7 +242,14 @@ func (idx *goIndexer) addFile(name string) {
 		}
 	}
 	idx.lines[name] = strings.Split(text, "\n")
-	pkg := path.Join(idx.module, dir)
+	relative := dir
+	if root != "." {
+		relative = strings.TrimPrefix(dir, root+"/")
+	}
+	pkg := path.Join(mod.Module.Mod.Path, relative)
+	if mod.Go != nil {
+		idx.versions[pkg] = "go" + mod.Go.Version
+	}
 	if strings.HasSuffix(base, "_test.go") {
 		idx.tests[pkg] = append(idx.tests[pkg], file)
 		return
@@ -234,7 +279,7 @@ func (idx *goIndexer) Import(name string) (*types.Package, error) {
 	}
 	idx.checking[name] = true
 	defer delete(idx.checking, name)
-	pkg, err := idx.check(name, files, idx, false)
+	pkg, err := idx.check(name, idx.versions[name], files, idx, false)
 	if pkg != nil {
 		// A partial package still contains definitions for references already resolved.
 		idx.checked[name] = pkg
@@ -243,10 +288,10 @@ func (idx *goIndexer) Import(name string) (*types.Package, error) {
 	return nil, err
 }
 
-func (idx *goIndexer) check(name string, files []*ast.File, importer types.Importer, testsOnly bool) (*types.Package, error) {
+func (idx *goIndexer) check(name, goVersion string, files []*ast.File, importer types.Importer, testsOnly bool) (*types.Package, error) {
 	info := types.Info{Uses: map[*ast.Ident]types.Object{}, Defs: map[*ast.Ident]types.Object{}}
 	cfg := types.Config{
-		Importer: importer, GoVersion: idx.goVersion, Sizes: idx.sizes,
+		Importer: importer, GoVersion: goVersion, Sizes: idx.sizes,
 		Error: func(err error) { idx.result.Diagnostics = append(idx.result.Diagnostics, err.Error()) },
 	}
 	pkg, err := cfg.Check(name, idx.fset, files, &info)
