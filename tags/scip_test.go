@@ -120,7 +120,7 @@ type sourceLine struct {
 func collectSpans(sources map[string][]string, indexes ...*scip.Index) map[string]map[int]*sourceLine {
 	files := make(map[string]map[int]*sourceLine)
 
-	visitSCIPSpans(sources, indexes, func(path string, line int, text string, span occurrenceSpan) {
+	visitSCIPSpans(sources, indexes, false, func(path string, line int, text string, span occurrenceSpan, _ string, _ int) {
 		rows := files[path]
 		if rows == nil {
 			rows = make(map[int]*sourceLine)
@@ -132,7 +132,7 @@ func collectSpans(sources map[string][]string, indexes ...*scip.Index) map[strin
 		}
 
 		rows[line].Spans = append(rows[line].Spans, span)
-	}, nil)
+	})
 
 	return files
 }

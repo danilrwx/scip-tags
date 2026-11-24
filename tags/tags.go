@@ -33,10 +33,12 @@ import (
 type tag struct {
 	name string
 	location
-	local    bool
-	end      int
-	hash     string
-	symbolID int
+	local      bool
+	end        int
+	hash       string
+	symbolID   int
+	flags      int
+	unresolved bool
 }
 
 // Write emits sorted, ctags-compatible definitions and position tags. The
@@ -122,35 +124,34 @@ func Write(w io.Writer, tree fs.FS, indexes ...*scip.Index) error {
 		lastLine           int
 	)
 
-	lineDigest := func(path string, line int, text string) string {
-		if path != lastPath || line != lastLine {
-			lastPath, lastLine, lineHash = path, line, sourceHash(text)
-		}
-
-		return lineHash
-	}
-
 	symbolIDs := make(map[string]int)
 
-	visitSCIPSpans(sources, indexes, func(path string, line int, text string, span occurrenceSpan) {
-		name := fmt.Sprintf("%s%s:%d:%d", positionTagPrefix, path, line, span.Start+1)
-		hash := lineDigest(path, line, text)
-
-		for _, target := range span.Targets {
-			entries[tag{name: name, location: target, end: span.End + 1, hash: hash}] = struct{}{}
-		}
-	}, func(path string, line int, text string, span occurrenceSpan, symbol string) {
+	visitSCIPSpans(sources, indexes, true, func(path string, line int, text string, span occurrenceSpan, symbol string, flags int) {
 		id := symbolIDs[symbol]
 		if id == 0 {
 			id = len(symbolIDs) + 1
 			symbolIDs[symbol] = id
 		}
 
-		name := fmt.Sprintf("%s%s:%d:%d", referenceTagPrefix, path, line, span.Start+1)
-		entries[tag{
-			name: name, location: location{path, line, span.Start}, end: span.End + 1,
-			hash: lineDigest(path, line, text), symbolID: id,
-		}] = struct{}{}
+		if path != lastPath || line != lastLine {
+			lastPath, lastLine, lineHash = path, line, sourceHash(text)
+		}
+
+		entry := tag{end: span.End + 1, hash: lineHash, symbolID: id, flags: flags}
+		if len(span.Targets) == 0 {
+			entry.name = fmt.Sprintf("%s%s:%d:%d", referenceTagPrefix, path, line, span.Start+1)
+			entry.location = location{path, line, span.Start}
+			entry.unresolved = true
+			entries[entry] = struct{}{}
+
+			return
+		}
+
+		entry.name = fmt.Sprintf("%s%s:%d:%d", positionTagPrefix, path, line, span.Start+1)
+		for _, target := range span.Targets {
+			entry.location = target
+			entries[entry] = struct{}{}
+		}
 	})
 
 	tags := make([]tag, 0, len(entries))
@@ -162,6 +163,7 @@ func Write(w io.Writer, tree fs.FS, indexes ...*scip.Index) error {
 		return cmp.Or(cmp.Compare(a.name, b.name), cmp.Compare(a.Path, b.Path),
 			cmp.Compare(a.Line, b.Line), cmp.Compare(a.Column, b.Column), cmp.Compare(a.end, b.end),
 			cmp.Compare(a.symbolID, b.symbolID),
+			cmp.Compare(a.flags, b.flags),
 			cmp.Compare(localField(a), localField(b)))
 	})
 
@@ -171,7 +173,7 @@ func Write(w io.Writer, tree fs.FS, indexes ...*scip.Index) error {
 	fmt.Fprintln(out, "!_TAG_PROGRAM_NAME\tscip-tags\t//")
 
 	for _, entry := range tags {
-		if entry.symbolID > 0 {
+		if entry.unresolved {
 			fmt.Fprintf(out, "%s\t%s\t%d;\"\tsymbol:%d", entry.name, entry.Path, entry.Line, entry.symbolID)
 		} else {
 			fmt.Fprintf(out, "%s\t%s\t%d;\"\tcolumn:%d%s", entry.name, entry.Path, entry.Line, entry.Column+1, localField(entry))
@@ -179,6 +181,14 @@ func Write(w io.Writer, tree fs.FS, indexes ...*scip.Index) error {
 
 		if entry.end > 0 {
 			fmt.Fprintf(out, "\tend:%d\tsourcehash:%s", entry.end, entry.hash)
+
+			if !entry.unresolved {
+				fmt.Fprintf(out, "\tsymbol:%d", entry.symbolID)
+			}
+
+			if entry.flags != 0 {
+				fmt.Fprintf(out, "\tflags:%d", entry.flags)
+			}
 		}
 
 		fmt.Fprintln(out)

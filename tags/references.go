@@ -51,6 +51,7 @@ type positionTag struct {
 	endColumn int
 	hash      string
 	symbol    string
+	flags     int
 }
 
 // References resolves a position and finds the indexed uses of its targets.
@@ -112,7 +113,7 @@ func References(input io.ReadSeeker, tree fs.FS, query Position, hash string) ([
 
 	err = scanTags(input, func(line []byte, prefix string) {
 		entry, ok := parsePositionTag(line, prefix, targets)
-		if !ok || entry.source == entry.target {
+		if !ok || entry.source == entry.target || entry.flags&(definitionFlag|continuationFlag) != 0 {
 			return
 		}
 
@@ -154,29 +155,37 @@ func scanTags(input io.Reader, visit func([]byte, string)) error {
 }
 
 func parsePositionTag(line []byte, prefix string, targets map[string]struct{}) (positionTag, bool) {
-	var fields [6][]byte
+	var fields [5][]byte
 
 	raw := line
-	for i := range len(fields) - 1 {
+	for i := range fields {
 		field, rest, ok := bytes.Cut(raw, []byte("\t"))
 		if !ok {
 			return positionTag{}, false
 		}
 
 		fields[i], raw = field, rest
-		if i == 3 && targets != nil {
-			key := line[len(fields[0])+1 : len(line)-len(rest)-1]
-			if prefix == referenceTagPrefix {
-				key = field
-			}
+	}
 
-			if _, matched := targets[string(key)]; !matched {
-				return positionTag{}, false
-			}
+	hashField, extensions, _ := bytes.Cut(raw, []byte("\t"))
+
+	symbol := fields[3]
+	if prefix == positionTagPrefix {
+		symbol, extensions, _ = bytes.Cut(extensions, []byte("\t"))
+	}
+
+	if targets != nil {
+		key := symbol
+		if len(key) == 0 {
+			start := len(fields[0]) + 1
+			key = line[start : start+len(fields[1])+len(fields[2])+len(fields[3])+2]
+		}
+
+		if _, matched := targets[string(key)]; !matched {
+			return positionTag{}, false
 		}
 	}
 
-	fields[5] = raw
 	source := fields[0][len(prefix):]
 
 	colStart := bytes.LastIndexByte(source, ':')
@@ -192,9 +201,9 @@ func parsePositionTag(line []byte, prefix string, targets map[string]struct{}) (
 	sourceLine := positiveNumber(source[rowStart+1 : colStart])
 	sourceColumn := positiveNumber(source[colStart+1:])
 	endColumn := positiveNumber(bytes.TrimPrefix(fields[4], []byte("end:")))
-	hash, hashOK := bytes.CutPrefix(fields[5], []byte("sourcehash:"))
-	sourcePath := string(source[:rowStart])
+	hash, hashOK := bytes.CutPrefix(hashField, []byte("sourcehash:"))
 
+	sourcePath := string(source[:rowStart])
 	if sourceLine == 0 || sourceColumn == 0 || endColumn <= sourceColumn || !hashOK || !validDocumentPath(sourcePath) {
 		return positionTag{}, false
 	}
@@ -205,13 +214,18 @@ func parsePositionTag(line []byte, prefix string, targets map[string]struct{}) (
 		hash:      string(hash),
 	}
 
-	if prefix == referenceTagPrefix {
-		if id, ok := bytes.CutPrefix(fields[3], []byte("symbol:")); !ok || positiveNumber(id) == 0 {
+	if len(symbol) > 0 {
+		if id, ok := bytes.CutPrefix(symbol, []byte("symbol:")); !ok || positiveNumber(id) == 0 {
 			return positionTag{}, false
 		}
 
-		entry.symbol = string(fields[3])
+		entry.symbol = string(symbol)
+	}
 
+	flags, _ := bytes.CutPrefix(extensions, []byte("flags:"))
+
+	entry.flags = positiveNumber(flags)
+	if prefix == referenceTagPrefix {
 		return entry, true
 	}
 

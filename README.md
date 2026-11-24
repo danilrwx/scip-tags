@@ -112,6 +112,13 @@ replace definitions, and merging indexes preserves both versioned symbols and
 document-scoped local IDs. Other cases cover UTF-8, UTF-16 and UTF-32 coordinates,
 multiline ranges, and generated files outside the source root.
 
+The reference matrix checks **12,420 cursor queries across 180 synthetic SCIP
+fixtures**. It combines five language layouts, mixed position encodings,
+duplicate indexes, same-name declarations, different dependency versions, and
+saved, changed, or deleted source files. It also checks that a multiline
+occurrence appears once and that two symbols can share a definition position
+without sharing their references.
+
 CI runs the regression suite, `go vet`, and golangci-lint, then builds the CLI for
 Linux and OpenBSD/ARM. A separate headless Vim check exercised `Ctrl-]` on two
 same-name Go methods, `Ctrl-T` back to the call site, and rejection of a changed
@@ -136,6 +143,12 @@ With the project-only Go index, zero of 200 additional references to definitions
 outside the module resolved to the expected location. Coverage depends on the
 definitions and occurrence positions supplied by the input indexes.
 The benchmark was run separately from CI.
+
+The same local fixtures also exercise reverse lookups from definitions. The
+reader found 2,403 of 2,405 expected reference sites in `golang.org/x/mod`,
+2,029 of 2,656 in Lua, and 2,332 of 2,900 in libevent. The C run used the
+repaired indexes. The sampled results still include ambiguous SCIP symbols,
+such as two file-local declarations of `progname` that share one SCIP identifier.
 
 ## License
 

@@ -40,10 +40,14 @@ type occurrenceSpan struct {
 	Targets []location
 }
 
+const (
+	definitionFlag = 1 << iota
+	continuationFlag
+)
+
 func visitSCIPSpans(
-	sources map[string][]string, indexes []*scip.Index,
-	visit func(path string, line int, text string, span occurrenceSpan),
-	unresolved func(path string, line int, text string, span occurrenceSpan, symbol string),
+	sources map[string][]string, indexes []*scip.Index, includeUnresolved bool,
+	visit func(path string, line int, text string, span occurrenceSpan, symbol string, flags int),
 ) {
 	// Local symbol IDs belong to a document in one input index.
 	key := func(index int, path, symbol string) string {
@@ -91,7 +95,7 @@ func visitSCIPSpans(
 				targets := defs[symbol]
 
 				r, ok := occ.SourceRange()
-				if !ok || len(targets) == 0 && (unresolved == nil || symbol == "") {
+				if !ok || len(targets) == 0 && (!includeUnresolved || symbol == "") {
 					continue
 				}
 
@@ -100,6 +104,11 @@ func visitSCIPSpans(
 				end, endOK := byteOffset(lines, r.End, doc.PositionEncoding)
 				if !startOK || !endOK || r.Start.Line > r.End.Line {
 					continue
+				}
+
+				flags := 0
+				if isDefinition(occ) {
+					flags = definitionFlag
 				}
 
 				for line := int(r.Start.Line); line <= int(r.End.Line); line++ {
@@ -116,12 +125,8 @@ func visitSCIPSpans(
 						continue
 					}
 
-					span := occurrenceSpan{left, right, targets}
-					if len(targets) == 0 {
-						unresolved(doc.RelativePath, line+1, lines[line], span, symbol)
-					} else {
-						visit(doc.RelativePath, line+1, lines[line], span)
-					}
+					visit(doc.RelativePath, line+1, lines[line], occurrenceSpan{left, right, targets}, symbol, flags)
+					flags |= continuationFlag
 				}
 			}
 		}
