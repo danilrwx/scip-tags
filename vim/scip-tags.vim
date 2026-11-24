@@ -181,6 +181,66 @@ if empty(&g:tagfunc)
   endif
 endif
 
+function! s:ReferencesFinished(root, title, output, errors, job, status, ...) abort
+  unlet! s:references_job
+  try
+    if a:status != 0
+      echohl WarningMsg
+      echomsg filereadable(a:errors) ? join(readfile(a:errors, '', -3), ' ') : 'scip-tags: cannot search references'
+      echohl None
+      return
+    endif
+    let refs = json_decode(join(readfile(a:output), "\n"))
+    let items = map(refs, {_, ref -> {'filename': a:root . '/' . ref.path,
+          \ 'lnum': ref.line, 'col': ref.column, 'text': ref.text}})
+    call setqflist([], ' ', {'title': 'SCIP references: ' . a:title, 'items': items})
+    if empty(items)
+      echomsg 'scip-tags: no indexed references'
+    else
+      copen
+    endif
+  finally
+    call delete(a:output)
+    call delete(a:errors)
+  endtry
+endfunction
+
+function! s:References() abort
+  if exists('s:references_job')
+    echomsg 'scip-tags: reference search already running'
+    return
+  endif
+  let source = resolve(expand('%:p'))
+  let tags = findfile('tags', s:SearchPath(source))
+  if empty(tags) || !executable('scip-tags')
+    echomsg 'scip-tags: references need a tags file and the scip-tags CLI'
+    return
+  endif
+  let tags = fnamemodify(tags, ':p')
+  let root = fnamemodify(tags, ':h')
+  let file = strpart(source, strlen(root) + 1)
+  let output = tempname()
+  let errors = tempname()
+  let args = ['sh', '-c', 'out=$1; err=$2; shift 2; exec "$@" </dev/null >"$out" 2>"$err"',
+        \ 'scip-tags', output, errors, 'scip-tags', 'refs', '-tags', tags, '-file', file,
+        \ '-line', string(line('.')), '-column', string(col('.')), '-sourcehash', sha256(getline('.'))[:11]]
+  let Done = function('s:ReferencesFinished', [root, expand('<cword>'), output, errors])
+  try
+    if has('nvim')
+      let s:references_job = jobstart(args, {'cwd': root, 'on_exit': Done})
+      let failed = s:references_job <= 0
+    else
+      let s:references_job = job_start(args, {'cwd': root, 'exit_cb': Done})
+      let failed = job_status(s:references_job) ==# 'fail'
+    endif
+  catch /^Vim/
+    let failed = 1
+  endtry
+  if failed
+    call s:ReferencesFinished(root, '', output, errors, 0, 127)
+  endif
+endfunction
+
 command! ScipTagsDefinition execute "normal! \<C-]>"
 nnoremap <Plug>(ScipTagsDefinition) <C-]>
 
@@ -188,6 +248,7 @@ command! CodeIndexDefinition ScipTagsDefinition
 nmap <Plug>(CodeIndexDefinition) <Plug>(ScipTagsDefinition)
 
 command! ScipTagsUpdate call s:Update(bufnr('%'), expand('%:p'), 0)
+command! ScipTagsReferences call s:References()
 
 augroup scip_tags_update
   autocmd!

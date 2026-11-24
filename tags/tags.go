@@ -52,7 +52,7 @@ func Write(w io.Writer, tree fs.FS, indexes ...*scip.Index) error {
 				continue
 			}
 
-			if !fs.ValidPath(path) || path == "." || strings.ContainsRune(path, '\\') || strings.ContainsFunc(path, unicode.IsControl) {
+			if !validDocumentPath(path) {
 				return fmt.Errorf("unsupported SCIP document path %q", path)
 			}
 
@@ -122,10 +122,9 @@ func Write(w io.Writer, tree fs.FS, indexes ...*scip.Index) error {
 	)
 
 	visitSCIPSpans(sources, indexes, func(path string, line int, text string, span occurrenceSpan) {
-		name := fmt.Sprintf("__scip__:%s:%d:%d", path, line, span.Start+1)
+		name := fmt.Sprintf("%s%s:%d:%d", positionTagPrefix, path, line, span.Start+1)
 		if path != lastPath || line != lastLine {
-			hash := sha256.Sum256([]byte(text))
-			lastPath, lastLine, lineHash = path, line, fmt.Sprintf("%x", hash[:6])
+			lastPath, lastLine, lineHash = path, line, sourceHash(text)
 		}
 
 		for _, target := range span.Targets {
@@ -160,6 +159,16 @@ func Write(w io.Writer, tree fs.FS, indexes ...*scip.Index) error {
 	}
 
 	return out.Flush()
+}
+
+func validDocumentPath(path string) bool {
+	return fs.ValidPath(path) && path != "." && !strings.ContainsRune(path, '\\') &&
+		!strings.ContainsFunc(path, unicode.IsControl)
+}
+
+func sourceHash(text string) string {
+	hash := sha256.Sum256([]byte(text))
+	return fmt.Sprintf("%x", hash[:6])
 }
 
 func localField(entry tag) string {

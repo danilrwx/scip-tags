@@ -16,6 +16,7 @@ package tags
 
 import (
 	"bytes"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -63,6 +64,26 @@ func TestTagsKeepHomonymsAndResolvePositions(t *testing.T) {
 	if !strings.Contains(tags, "__scip__:call.go:1:6\ta.go\t1;\"\tcolumn:1\tend:11\tsourcehash:") ||
 		strings.Contains(tags, "__scip__:call.go:1:6\tb.go") {
 		t.Fatalf("wrong target or UTF-16 position: %s", tags)
+	}
+
+	want := []Reference{{Position: Position{Path: "call.go", Line: 1, Column: 6}, Text: "🚀 Label()"}}
+	for _, position := range []Position{{Path: "a.go", Line: 1, Column: 3}, {Path: "call.go", Line: 1, Column: 7}} {
+		refs, err := References(bytes.NewReader(out.Bytes()), tree, position, "")
+		if err != nil || !slices.Equal(refs, want) {
+			t.Fatalf("references at %#v: got %#v, %v; want %#v", position, refs, err, want)
+		}
+	}
+
+	managerRefs, err := References(bytes.NewReader(out.Bytes()), tree, Position{Path: "b.go", Line: 1, Column: 1}, "")
+	if err != nil || !slices.Equal(managerRefs, []Reference{{Position: Position{Path: "a.go", Line: 2, Column: 1}, Text: "Label();"}}) {
+		t.Fatalf("same-name manager references: %#v, %v", managerRefs, err)
+	}
+
+	tree["call.go"] = &fstest.MapFile{Data: []byte("🚀 Other()\n")}
+
+	stale, err := References(bytes.NewReader(out.Bytes()), tree, Position{Path: "a.go", Line: 1, Column: 1}, "")
+	if err != nil || len(stale) != 0 {
+		t.Fatalf("stale references: %#v, %v", stale, err)
 	}
 }
 

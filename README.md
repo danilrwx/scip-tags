@@ -55,6 +55,13 @@ after editing indexed source lines.
 The plugin uses Vim's `tagfunc`. If you already configured a tag function, Vim
 continues to use it.
 
+### Find references in Vim
+
+Place the cursor on a definition or call and run `:ScipTagsReferences`. The
+command searches the existing `tags` in the background and opens the matching
+locations in quickfix. Use `:cnext` and `:cprev` to move between them. Results
+cover the source tree represented by that `tags` file.
+
 ### Refresh from Vim
 
 Set `g:scip_tags_update_command` in your vimrc and run `:ScipTagsUpdate` to build

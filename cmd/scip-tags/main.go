@@ -22,6 +22,10 @@ import (
 )
 
 func run() error {
+	if len(os.Args) > 1 && os.Args[1] == "refs" {
+		return runReferences(os.Args[2:])
+	}
+
 	root := flag.String("root", "", "source root (default: SCIP project root)")
 	format := flag.String("format", "tags", "output format (tags or ctags)")
 
