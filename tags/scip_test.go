@@ -132,7 +132,7 @@ func collectSpans(sources map[string][]string, indexes ...*scip.Index) map[strin
 		}
 
 		rows[line].Spans = append(rows[line].Spans, span)
-	})
+	}, nil)
 
 	return files
 }

@@ -27,7 +27,10 @@ import (
 	"strings"
 )
 
-const positionTagPrefix = "__scip__:"
+const (
+	positionTagPrefix  = "__scip__:"
+	referenceTagPrefix = "__scipref__:"
+)
 
 // Position identifies a location in the source tree using 1-based byte columns.
 type Position struct {
@@ -47,6 +50,7 @@ type positionTag struct {
 	target    Position
 	endColumn int
 	hash      string
+	symbol    string
 }
 
 // References resolves a position and finds the indexed uses of its targets.
@@ -72,20 +76,24 @@ func References(input io.ReadSeeker, tree fs.FS, query Position, hash string) ([
 	}
 
 	targets := make(map[string]struct{})
-	cursorPrefix := []byte(positionTagPrefix + query.Path + ":" + strconv.Itoa(query.Line) + ":")
+	cursorPrefix := []byte(query.Path + ":" + strconv.Itoa(query.Line) + ":")
 
-	err := scanTags(input, func(line []byte) {
-		if !bytes.HasPrefix(line, cursorPrefix) {
+	err := scanTags(input, func(line []byte, prefix string) {
+		if !bytes.HasPrefix(line[len(prefix):], cursorPrefix) {
 			return
 		}
 
-		entry, ok := parsePositionTag(line, nil)
+		entry, ok := parsePositionTag(line, prefix, nil)
 		if !ok || query.Column < entry.source.Column || query.Column >= entry.endColumn ||
 			hash != "" && hash != entry.hash || !isCurrent(entry.source, entry.hash) {
 			return
 		}
 
-		key := fmt.Sprintf("%s\t%d;\"\tcolumn:%d", entry.target.Path, entry.target.Line, entry.target.Column)
+		key := entry.symbol
+		if key == "" {
+			key = fmt.Sprintf("%s\t%d;\"\tcolumn:%d", entry.target.Path, entry.target.Line, entry.target.Column)
+		}
+
 		targets[key] = struct{}{}
 	})
 	if err != nil {
@@ -102,8 +110,8 @@ func References(input io.ReadSeeker, tree fs.FS, query Position, hash string) ([
 
 	found := make(map[Position]struct{})
 
-	err = scanTags(input, func(line []byte) {
-		entry, ok := parsePositionTag(line, targets)
+	err = scanTags(input, func(line []byte, prefix string) {
+		entry, ok := parsePositionTag(line, prefix, targets)
 		if !ok || entry.source == entry.target {
 			return
 		}
@@ -128,21 +136,24 @@ func References(input io.ReadSeeker, tree fs.FS, query Position, hash string) ([
 	return results, nil
 }
 
-func scanTags(input io.Reader, visit func([]byte)) error {
+func scanTags(input io.Reader, visit func([]byte, string)) error {
 	scanner := bufio.NewScanner(input)
 	scanner.Buffer(make([]byte, 64<<10), 1<<20)
 
 	for scanner.Scan() {
 		line := scanner.Bytes()
-		if bytes.HasPrefix(line, []byte(positionTagPrefix)) {
-			visit(line)
+		switch {
+		case bytes.HasPrefix(line, []byte(positionTagPrefix)):
+			visit(line, positionTagPrefix)
+		case bytes.HasPrefix(line, []byte(referenceTagPrefix)):
+			visit(line, referenceTagPrefix)
 		}
 	}
 
 	return scanner.Err()
 }
 
-func parsePositionTag(line []byte, targets map[string]struct{}) (positionTag, bool) {
+func parsePositionTag(line []byte, prefix string, targets map[string]struct{}) (positionTag, bool) {
 	var fields [6][]byte
 
 	raw := line
@@ -155,6 +166,10 @@ func parsePositionTag(line []byte, targets map[string]struct{}) (positionTag, bo
 		fields[i], raw = field, rest
 		if i == 3 && targets != nil {
 			key := line[len(fields[0])+1 : len(line)-len(rest)-1]
+			if prefix == referenceTagPrefix {
+				key = field
+			}
+
 			if _, matched := targets[string(key)]; !matched {
 				return positionTag{}, false
 			}
@@ -162,7 +177,7 @@ func parsePositionTag(line []byte, targets map[string]struct{}) (positionTag, bo
 	}
 
 	fields[5] = raw
-	source := fields[0][len(positionTagPrefix):]
+	source := fields[0][len(prefix):]
 
 	colStart := bytes.LastIndexByte(source, ':')
 	if colStart < 0 {
@@ -176,23 +191,41 @@ func parsePositionTag(line []byte, targets map[string]struct{}) (positionTag, bo
 
 	sourceLine := positiveNumber(source[rowStart+1 : colStart])
 	sourceColumn := positiveNumber(source[colStart+1:])
-	targetLine := positiveNumber(bytes.TrimSuffix(fields[2], []byte(";\"")))
-	targetColumn := positiveNumber(bytes.TrimPrefix(fields[3], []byte("column:")))
 	endColumn := positiveNumber(bytes.TrimPrefix(fields[4], []byte("end:")))
 	hash, hashOK := bytes.CutPrefix(fields[5], []byte("sourcehash:"))
-	sourcePath, targetPath := string(source[:rowStart]), string(fields[1])
+	sourcePath := string(source[:rowStart])
 
-	if sourceLine == 0 || sourceColumn == 0 || targetLine == 0 || targetColumn == 0 ||
-		endColumn <= sourceColumn || !hashOK || !validDocumentPath(sourcePath) || !validDocumentPath(targetPath) {
+	if sourceLine == 0 || sourceColumn == 0 || endColumn <= sourceColumn || !hashOK || !validDocumentPath(sourcePath) {
 		return positionTag{}, false
 	}
 
-	return positionTag{
+	entry := positionTag{
 		source:    Position{sourcePath, sourceLine, sourceColumn},
-		target:    Position{targetPath, targetLine, targetColumn},
 		endColumn: endColumn,
 		hash:      string(hash),
-	}, true
+	}
+
+	if prefix == referenceTagPrefix {
+		if id, ok := bytes.CutPrefix(fields[3], []byte("symbol:")); !ok || positiveNumber(id) == 0 {
+			return positionTag{}, false
+		}
+
+		entry.symbol = string(fields[3])
+
+		return entry, true
+	}
+
+	targetPath := string(fields[1])
+	targetLine := positiveNumber(bytes.TrimSuffix(fields[2], []byte(";\"")))
+
+	targetColumn := positiveNumber(bytes.TrimPrefix(fields[3], []byte("column:")))
+	if targetLine == 0 || targetColumn == 0 || !validDocumentPath(targetPath) {
+		return positionTag{}, false
+	}
+
+	entry.target = Position{targetPath, targetLine, targetColumn}
+
+	return entry, true
 }
 
 func positiveNumber(value []byte) int {

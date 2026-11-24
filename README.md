@@ -60,7 +60,8 @@ continues to use it.
 Place the cursor on a definition or call and run `:ScipTagsReferences`. The
 command searches the existing `tags` in the background and opens the matching
 locations in quickfix. Use `:cnext` and `:cprev` to move between them. Results
-cover the source tree represented by that `tags` file.
+cover the source tree represented by that `tags` file, including uses of
+symbols defined in dependencies. Refresh older `tags` files to index those uses.
 
 ### Refresh from Vim
 

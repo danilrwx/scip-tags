@@ -40,7 +40,11 @@ type occurrenceSpan struct {
 	Targets []location
 }
 
-func visitSCIPSpans(sources map[string][]string, indexes []*scip.Index, visit func(path string, line int, text string, span occurrenceSpan)) {
+func visitSCIPSpans(
+	sources map[string][]string, indexes []*scip.Index,
+	visit func(path string, line int, text string, span occurrenceSpan),
+	unresolved func(path string, line int, text string, span occurrenceSpan, symbol string),
+) {
 	// Local symbol IDs belong to a document in one input index.
 	key := func(index int, path, symbol string) string {
 		if strings.HasPrefix(symbol, "local ") {
@@ -83,10 +87,11 @@ func visitSCIPSpans(sources map[string][]string, indexes []*scip.Index, visit fu
 		for _, doc := range index.Documents {
 			lines := sources[doc.RelativePath]
 			for _, occ := range doc.Occurrences {
-				targets := defs[key(i, doc.RelativePath, occ.Symbol)]
+				symbol := key(i, doc.RelativePath, occ.Symbol)
+				targets := defs[symbol]
 
 				r, ok := occ.SourceRange()
-				if !ok || len(targets) == 0 {
+				if !ok || len(targets) == 0 && (unresolved == nil || symbol == "") {
 					continue
 				}
 
@@ -111,7 +116,12 @@ func visitSCIPSpans(sources map[string][]string, indexes []*scip.Index, visit fu
 						continue
 					}
 
-					visit(doc.RelativePath, line+1, lines[line], occurrenceSpan{left, right, targets})
+					span := occurrenceSpan{left, right, targets}
+					if len(targets) == 0 {
+						unresolved(doc.RelativePath, line+1, lines[line], span, symbol)
+					} else {
+						visit(doc.RelativePath, line+1, lines[line], span)
+					}
 				}
 			}
 		}

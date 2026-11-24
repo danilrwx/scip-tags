@@ -112,3 +112,44 @@ func TestWriteSkipsGeneratedDocumentsOutsideSourceRoot(t *testing.T) {
 		t.Fatalf("unexpected tags: %s", result)
 	}
 }
+
+func TestReferencesForExternalSymbolsUseSCIPIdentity(t *testing.T) {
+	const (
+		oldVersion = "scip-go gomod example.com/lib v1 Quantity#"
+		newVersion = "scip-go gomod example.com/lib v2 Quantity#"
+	)
+
+	index := &scip.Index{Documents: []*scip.Document{
+		{RelativePath: "a.go", Occurrences: []*scip.Occurrence{
+			{Range: []int32{0, 0, 6}, Symbol: "anchor", SymbolRoles: int32(scip.SymbolRole_Definition)},
+			{Range: []int32{1, 0, 8}, Symbol: oldVersion},
+		}},
+		{RelativePath: "b.go", Occurrences: []*scip.Occurrence{
+			{Range: []int32{0, 0, 8}, Symbol: oldVersion},
+			{Range: []int32{1, 0, 8}, Symbol: newVersion},
+		}},
+	}}
+	tree := fstest.MapFS{
+		"a.go": {Data: []byte("anchor\nQuantity\n")},
+		"b.go": {Data: []byte("Quantity\nQuantity\n")},
+	}
+
+	var out bytes.Buffer
+	if err := Write(&out, tree, index); err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(out.String(), "__scip__:a.go:2:1\t") {
+		t.Fatal("an external reference has no local definition tag")
+	}
+
+	results, err := References(bytes.NewReader(out.Bytes()), tree, Position{Path: "a.go", Line: 2, Column: 4}, "")
+
+	want := []Reference{
+		{Position: Position{Path: "a.go", Line: 2, Column: 1}, Text: "Quantity"},
+		{Position: Position{Path: "b.go", Line: 1, Column: 1}, Text: "Quantity"},
+	}
+	if err != nil || !slices.Equal(results, want) {
+		t.Fatalf("external references: got %#v, %v; want %#v", results, err, want)
+	}
+}
